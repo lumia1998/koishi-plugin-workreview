@@ -1,7 +1,6 @@
 import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import path from 'path'
-import { fileURLToPath } from 'url'
 import type { Config } from './config.js'
 import type { ActivityAnalysis } from './llm.js'
 import type { ReportMetrics } from './workreview.js'
@@ -109,11 +108,7 @@ export class ActivityRenderer {
     }
 
     private getResourcePath(filename: string): string {
-        const dirname =
-            typeof __dirname === 'string'
-                ? __dirname
-                : path.dirname(fileURLToPath(import.meta.url))
-        return path.resolve(dirname, '../resources', filename)
+        return path.resolve(__dirname, '../resources', filename)
     }
 
     private getStylePath(): string {

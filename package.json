@@ -1,16 +1,16 @@
 {
   "name": "koishi-plugin-workreview",
   "description": "Work_Review activity report plugin powered by ChatLuna",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
-  "main": "lib/index.js",
-  "module": "lib/index.js",
+  "main": "lib/index.cjs",
+  "module": "lib/index.mjs",
   "typings": "lib/index.d.ts",
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
-      "import": "./lib/index.js",
-      "require": "./lib/index.js"
+      "import": "./lib/index.mjs",
+      "require": "./lib/index.cjs"
     },
     "./package.json": "./package.json"
   },
