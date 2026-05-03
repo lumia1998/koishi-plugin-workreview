@@ -20,7 +20,7 @@ export interface Config {
     pushes: PushConfig[]
     model: string
     temperature: number
-    analysisPrompt: string
+    stylePrompt: string
     commandName: string
     outputMode: 'image' | 'text' | 'both'
     theme: 'light' | 'dark' | 'auto'
@@ -75,32 +75,10 @@ export const Config: Schema<Config> = Schema.intersect([
             .max(2)
             .default(0.8)
             .description('模型温度'),
-        analysisPrompt: Schema.string()
+        stylePrompt: Schema.string()
             .role('textarea')
-            .default(`你是一个工作活动分析助手。请根据 Work_Review 采集到的原始活动日报，分析这一天的工作/娱乐/切换情况。
-
-要求：
-- 必须使用中文。
-- 不要重复原始表格，重点给出洞察。
-- 如果数据明显偏娱乐或样本不足，也要如实指出。
-- 输出必须是 JSON 对象，不要包裹 markdown 代码块。
-
-设备：{deviceName}
-日期：{date}
-
-原始日报：
-{rawReport}
-
-请返回以下 JSON：
-{
-  "summary": "一句话总结当天活动状态",
-  "efficiency": "对效率和专注度的评估",
-  "highlights": ["值得肯定或有价值的观察"],
-  "risks": ["潜在问题或异常"],
-  "suggestions": ["下一步建议"],
-  "tags": ["标签1", "标签2"]
-}`)
-            .description('AI 分析提示词。可用变量：{deviceName}、{date}、{rawReport}')
+            .default('你是一个专业的工作活动分析助手。语气简洁客观，重点给出洞察和可执行的建议。')
+            .description('AI 分析风格/人设描述。只需要描述语气和风格，输出格式由系统自动处理。')
     }).description('ChatLuna 设置'),
     Schema.object({
         outputMode: Schema.union([

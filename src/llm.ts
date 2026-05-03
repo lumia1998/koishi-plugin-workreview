@@ -38,14 +38,30 @@ export class ActivityLLM {
         const model = modelRef.value
         if (!model) throw new Error('ChatLuna 模型未就绪，请检查模型配置。')
 
-        const prompt = this.config.analysisPrompt
-            .replace(/\{deviceName\}/g, deviceName)
-            .replace(/\{date\}/g, date)
-            .replace(/\{rawReport\}/g, '')
+        const systemPrompt = [
+            this.config.stylePrompt,
+            '',
+            '请根据用户提供的 Work_Review 原始活动日报进行分析。',
+            '要求：',
+            '- 必须使用中文。',
+            '- 不要重复原始表格，重点给出洞察。',
+            '- 如果数据明显偏娱乐或样本不足，也要如实指出。',
+            '- 输出必须是纯 JSON 对象，不要包裹 markdown 代码块。',
+            '',
+            '请返回以下 JSON：',
+            '{',
+            '  "summary": "一句话总结当天活动状态",',
+            '  "efficiency": "对效率和专注度的评估",',
+            '  "highlights": ["值得肯定或有价值的观察"],',
+            '  "risks": ["潜在问题或异常"],',
+            '  "suggestions": ["下一步建议"],',
+            '  "tags": ["标签1", "标签2"]',
+            '}'
+        ].join('\n')
 
         const result = await model.invoke(
             [
-                new SystemMessage(prompt),
+                new SystemMessage(systemPrompt),
                 new HumanMessage(`设备：${deviceName}\n日期：${date}\n\n原始日报：\n${rawReport}`)
             ],
             { temperature: this.config.temperature }
