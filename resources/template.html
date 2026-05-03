@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>活动日报</title>
+        <link rel="stylesheet" href="${stylePath}" />
+    </head>
+    <body class="${theme}-theme">
+        <div class="container">
+            <header class="header">
+                <div class="eyebrow">Work_Review Activity Report</div>
+                <h1>${deviceName} 活动日报</h1>
+                <div class="subtitle">${date}</div>
+            </header>
+
+            <section class="summary-grid">
+                <div class="summary-card primary">
+                    <div class="label">总工作时长</div>
+                    <div class="value">${totalDuration}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">截图数量</div>
+                    <div class="value">${screenshotCount}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">应用数量</div>
+                    <div class="value">${appCount}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">网站数量</div>
+                    <div class="value">${websiteCount}</div>
+                </div>
+            </section>
+
+            <section class="section two-columns">
+                <div class="card">
+                    <h2>应用使用排行</h2>
+                    ${topApps}
+                </div>
+                <div class="card">
+                    <h2>活跃度概览</h2>
+                    ${activeLines}
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="card accent">
+                    <h2>AI 总结</h2>
+                    <p>${summary}</p>
+                    <div class="tags">${tags}</div>
+                </div>
+            </section>
+
+            <section class="section two-columns">
+                <div class="card">
+                    <h2>效率评估</h2>
+                    <p>${efficiency}</p>
+                </div>
+                <div class="card">
+                    <h2>亮点</h2>
+                    ${highlights}
+                </div>
+                <div class="card">
+                    <h2>风险</h2>
+                    ${risks}
+                </div>
+                <div class="card">
+                    <h2>建议</h2>
+                    ${suggestions}
+                </div>
+            </section>
+
+            <details class="raw-block">
+                <summary>原始日报数据（已忽略内置 AI 分析）</summary>
+                <div class="markdown">${rawReport}</div>
+            </details>
+
+            <footer>由 Work_Review / Koishi / ChatLuna 生成</footer>
+        </div>
+    </body>
+</html>

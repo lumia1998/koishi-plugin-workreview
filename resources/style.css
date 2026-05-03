@@ -1,0 +1,247 @@
+@import url('https://fonts.googleapis.com/css?family=Noto+Sans+SC');
+
+:root {
+    --light-bg: #fffbff;
+    --light-surface: #f7f2fa;
+    --light-surface-high: #ece6f0;
+    --light-primary: #6750a4;
+    --light-on-primary: #ffffff;
+    --light-on-surface: #1d1b20;
+    --light-on-variant: #49454f;
+    --light-outline: #cac4d0;
+
+    --dark-bg: #141218;
+    --dark-surface: #211f26;
+    --dark-surface-high: #2b2930;
+    --dark-primary: #d0bcff;
+    --dark-on-primary: #381e72;
+    --dark-on-surface: #e6e0e9;
+    --dark-on-variant: #cac4d0;
+    --dark-outline: #49454f;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Noto Sans SC', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--on-surface);
+}
+
+body.light-theme {
+    --bg: var(--light-bg);
+    --surface: var(--light-surface);
+    --surface-high: var(--light-surface-high);
+    --primary: var(--light-primary);
+    --on-primary: var(--light-on-primary);
+    --on-surface: var(--light-on-surface);
+    --on-variant: var(--light-on-variant);
+    --outline: var(--light-outline);
+}
+
+body.dark-theme {
+    --bg: var(--dark-bg);
+    --surface: var(--dark-surface);
+    --surface-high: var(--dark-surface-high);
+    --primary: var(--dark-primary);
+    --on-primary: var(--dark-on-primary);
+    --on-surface: var(--dark-on-surface);
+    --on-variant: var(--dark-on-variant);
+    --outline: var(--dark-outline);
+}
+
+.container {
+    width: 920px;
+    padding: 28px;
+    background: var(--bg);
+}
+
+.header {
+    padding: 28px 16px 24px;
+    text-align: center;
+}
+
+.eyebrow {
+    color: var(--primary);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+h1 {
+    margin: 8px 0;
+    font-size: 42px;
+    line-height: 1.2;
+}
+
+.subtitle {
+    color: var(--on-variant);
+    font-size: 20px;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 22px;
+}
+
+.summary-card,
+.card {
+    border-radius: 24px;
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    padding: 20px;
+}
+
+.summary-card.primary {
+    background: var(--primary);
+    color: var(--on-primary);
+}
+
+.summary-card .label {
+    color: currentColor;
+    opacity: 0.72;
+    font-size: 15px;
+    margin-bottom: 8px;
+}
+
+.summary-card .value {
+    font-size: 26px;
+    font-weight: 800;
+}
+
+.section {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.two-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.card {
+    background: var(--surface-high);
+}
+
+.card.accent {
+    background: color-mix(in srgb, var(--primary) 16%, var(--surface-high));
+}
+
+h2 {
+    margin: 0 0 14px;
+    font-size: 24px;
+}
+
+p {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.75;
+    color: var(--on-surface);
+}
+
+ul {
+    margin: 0;
+    padding-left: 1.2em;
+}
+
+li {
+    margin: 8px 0;
+    font-size: 17px;
+    line-height: 1.6;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 16px;
+}
+
+td {
+    border-bottom: 1px solid var(--outline);
+    padding: 9px 6px;
+}
+
+tr:last-child td {
+    border-bottom: none;
+}
+
+.rank {
+    width: 34px;
+    color: var(--primary);
+    font-weight: 800;
+}
+
+.duration {
+    text-align: right;
+    color: var(--on-variant);
+    white-space: nowrap;
+}
+
+.tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.tag {
+    display: inline-flex;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--primary);
+    border: 1px solid var(--outline);
+    padding: 6px 12px;
+    font-weight: 700;
+}
+
+.empty {
+    color: var(--on-variant);
+    font-size: 16px;
+}
+
+.raw-block {
+    margin-top: 18px;
+    border-radius: 20px;
+    border: 1px solid var(--outline);
+    background: var(--surface);
+    padding: 16px 20px;
+}
+
+.raw-block summary {
+    cursor: pointer;
+    color: var(--primary);
+    font-weight: 800;
+}
+
+.markdown {
+    margin-top: 14px;
+}
+
+.markdown h1 {
+    font-size: 28px;
+}
+
+.markdown h2 {
+    margin-top: 18px;
+}
+
+.markdown h3 {
+    font-size: 20px;
+}
+
+.markdown .bullet {
+    color: var(--on-variant);
+}
+
+footer {
+    padding: 22px 0 8px;
+    text-align: center;
+    color: var(--on-variant);
+    font-size: 15px;
+}
