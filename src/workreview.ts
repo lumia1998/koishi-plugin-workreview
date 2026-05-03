@@ -1,4 +1,4 @@
-import type { DeviceConfig } from './config'
+import type { DeviceConfig } from './config.js'
 
 export interface ReportResponse {
     date: string

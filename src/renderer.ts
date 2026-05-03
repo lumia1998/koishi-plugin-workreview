@@ -2,16 +2,16 @@ import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import type { Config } from './config'
-import type { ActivityAnalysis } from './llm'
-import type { ReportMetrics } from './workreview'
+import type { Config } from './config.js'
+import type { ActivityAnalysis } from './llm.js'
+import type { ReportMetrics } from './workreview.js'
 import {
     escapeHtml,
     formatList,
     formatTags,
     markdownToHtml,
     renderTemplate
-} from './utils'
+} from './utils.js'
 
 export interface RenderData {
     deviceName: string

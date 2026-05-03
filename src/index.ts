@@ -3,15 +3,15 @@ import type {} from 'koishi-plugin-chatluna'
 import type {} from 'koishi-plugin-puppeteer'
 import type {} from 'koishi-plugin-cron'
 import { modelSchema } from 'koishi-plugin-chatluna/utils/schema'
-import { Config, type DeviceConfig } from './config'
-import { ActivityLLM } from './llm'
-import { ActivityRenderer } from './renderer'
+import { Config, type DeviceConfig } from './config.js'
+import { ActivityLLM } from './llm.js'
+import { ActivityRenderer } from './renderer.js'
 import {
     extractReportMetrics,
     truncateRawReport,
     WorkReviewClient
-} from './workreview'
-import { isDateString, previousDates, today, yesterday } from './utils'
+} from './workreview.js'
+import { isDateString, previousDates, today, yesterday } from './utils.js'
 
 export const name = 'workreview'
 export const inject = ['chatluna', 'puppeteer']
