@@ -1,6 +1,6 @@
 import { Context } from 'koishi'
 import type { ChatLunaChatModel } from 'koishi-plugin-chatluna/llm-core/platform/model'
-import { SystemMessage } from '@langchain/core/messages'
+import { SystemMessage, HumanMessage } from '@langchain/core/messages'
 import { getMessageContent } from 'koishi-plugin-chatluna/utils/string'
 import type { ComputedRef } from 'koishi-plugin-chatluna'
 import type { Config } from './config.js'
@@ -41,10 +41,13 @@ export class ActivityLLM {
         const prompt = this.config.analysisPrompt
             .replace(/\{deviceName\}/g, deviceName)
             .replace(/\{date\}/g, date)
-            .replace(/\{rawReport\}/g, rawReport)
+            .replace(/\{rawReport\}/g, '')
 
         const result = await model.invoke(
-            [new SystemMessage(prompt)],
+            [
+                new SystemMessage(prompt),
+                new HumanMessage(`设备：${deviceName}\n日期：${date}\n\n原始日报：\n${rawReport}`)
+            ],
             { temperature: this.config.temperature }
         )
 
