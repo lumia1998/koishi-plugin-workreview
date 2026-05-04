@@ -114,6 +114,9 @@ export function formatList(items: string[] | undefined): string {
 
 export function formatTags(items: string[] | undefined): string {
     const list = items?.filter(Boolean) ?? []
-    if (!list.length) return '<span class="tag">暂无标签</span>'
-    return list.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join('')
+    if (!list.length) return '<span class="washi-tape-tag c1">暂无标签</span>'
+    const colors = ['c1', 'c2', 'c3', 'c4']
+    return list
+        .map((item, i) => `<span class="washi-tape-tag ${colors[i % colors.length]}">${escapeHtml(item)}</span>`)
+        .join('')
 }

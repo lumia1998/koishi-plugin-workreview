@@ -38,6 +38,7 @@ export function apply(ctx: Context, config: Config) {
     })
 
     const commandName = config.commandName || '活动日报'
+    const subcommands = new Set<string>()
 
     ctx.command(`${commandName} <device> [date]`, '生成活动日报')
         .option('yesterday', '-y, --yesterday 生成昨天的日报')
@@ -45,7 +46,7 @@ export function apply(ctx: Context, config: Config) {
         .option('text', '-t, --text 以文本形式返回 AI 分析')
         .action(async ({ session, options }, deviceName, dateArg) => {
             if (!session) return
-            if (isReservedSubcommand(deviceName)) return
+            if (isReservedSubcommand(deviceName, subcommands)) return
             if (!deviceName) return formatDeviceList(config.devices)
 
             const date = resolveDate(dateArg, options?.yesterday)
@@ -65,6 +66,7 @@ export function apply(ctx: Context, config: Config) {
             if (!date) return '日期格式错误，请使用 YYYY-MM-DD，或使用 -y 表示昨天。'
             return generateRawReport(deviceName, date)
         })
+    subcommands.add('原始')
 
     ctx.command(`${commandName}/周报 <device>`, '生成最近 7 天活动周报')
         .action(async ({ session }, deviceName) => {
@@ -72,10 +74,12 @@ export function apply(ctx: Context, config: Config) {
             if (!deviceName) return formatDeviceList(config.devices)
             return sendWeeklyReport(session, deviceName)
         })
+    subcommands.add('周报')
 
     ctx.command(`${commandName}/列表`, '查看已配置设备').action(() =>
         formatDeviceList(config.devices)
     )
+    subcommands.add('列表')
 
     ctx.command(`${commandName}/日报列表 <device>`, '查看设备已有日报日期').action(
         async (_, deviceName) => {
@@ -91,6 +95,7 @@ export function apply(ctx: Context, config: Config) {
             }
         }
     )
+    subcommands.add('日报列表')
 
     ctx.command(`${commandName}/设备信息 <device>`, '查看 Work_Review 设备信息').action(
         async (_, deviceName) => {
@@ -104,6 +109,7 @@ export function apply(ctx: Context, config: Config) {
             }
         }
     )
+    subcommands.add('设备信息')
 
     ctx.command(`${commandName}/健康 <device>`, '查看 Work_Review 健康状态').action(
         async (_, deviceName) => {
@@ -117,6 +123,7 @@ export function apply(ctx: Context, config: Config) {
             }
         }
     )
+    subcommands.add('健康')
 
     ctx.inject(['cron'], (ctx) => {
         for (const push of config.pushes.filter((item) => item.enabled)) {
@@ -151,11 +158,12 @@ export function apply(ctx: Context, config: Config) {
 
         try {
             const dates = previousDates(today(), 7)
-            const rawReports: string[] = []
-            for (const date of dates) {
-                const raw = await fetchTruncatedReport(device, date)
-                rawReports.push(`## ${date}\n\n${raw}`)
-            }
+            const rawReports = await Promise.all(
+                dates.map(async (date) => {
+                    const raw = await fetchTruncatedReport(device, date)
+                    return `## ${date}\n\n${raw}`
+                })
+            )
 
             const rawReport = rawReports.join('\n\n---\n\n')
             const analysis = await llm.analyze(device.name, `${dates.at(-1)} ~ ${dates[0]}`, rawReport)
@@ -164,7 +172,6 @@ export function apply(ctx: Context, config: Config) {
                 deviceName: `${device.name} 最近 7 天`,
                 date: `${dates.at(-1)} ~ ${dates[0]}`,
                 metrics,
-                rawReport,
                 analysis
             })
             await session.send(h.image(buffer, 'image/png'))
@@ -196,7 +203,6 @@ export function apply(ctx: Context, config: Config) {
                 deviceName: device.name,
                 date: metrics.date || date,
                 metrics,
-                rawReport,
                 analysis
             })
 
@@ -264,10 +270,10 @@ function formatTextReport(
     deviceName: string,
     date: string,
     rawReport: string,
-    analysis: { summary?: string; efficiency?: string; highlights?: string[]; risks?: string[]; suggestions?: string[]; tags?: string[]; rawText?: string }
+    analysis: { summary?: string; efficiency?: string; workPattern?: string; focusAnalysis?: string; highlights?: string[]; risks?: string[]; suggestions?: string[]; tags?: string[]; rawText?: string }
 ): string {
     if (analysis.rawText && !analysis.summary) return analysis.rawText
-    return [
+    const sections = [
         `# ${deviceName} 活动日报 ${date}`,
         '',
         `## AI 总结`,
@@ -275,6 +281,14 @@ function formatTextReport(
         '',
         `## 效率评估`,
         analysis.efficiency || '暂无评估',
+    ]
+    if (analysis.workPattern) {
+        sections.push('', `## 工作模式`, analysis.workPattern)
+    }
+    if (analysis.focusAnalysis) {
+        sections.push('', `## 专注分析`, analysis.focusAnalysis)
+    }
+    sections.push(
         '',
         `## 亮点`,
         formatMarkdownList(analysis.highlights),
@@ -287,7 +301,8 @@ function formatTextReport(
         '',
         `## 原始数据`,
         rawReport
-    ].join('\n')
+    )
+    return sections.join('\n')
 }
 
 function formatMarkdownList(items?: string[]): string {
@@ -304,6 +319,6 @@ function timeToCron(time: string): string | null {
     return `${minute} ${hour} * * *`
 }
 
-function isReservedSubcommand(value?: string): boolean {
-    return ['原始', '周报', '列表', '日报列表', '设备信息', '健康'].includes(value || '')
+function isReservedSubcommand(value: string | undefined, subcommands: Set<string>): boolean {
+    return subcommands.has(value || '')
 }

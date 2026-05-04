@@ -3,12 +3,11 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import type { Config } from './config.js'
 import type { ActivityAnalysis } from './llm.js'
-import type { ReportMetrics } from './workreview.js'
+import type { HourlyActivity, ReportMetrics } from './workreview.js'
 import {
     escapeHtml,
     formatList,
     formatTags,
-    markdownToHtml,
     renderTemplate
 } from './utils.js'
 
@@ -16,32 +15,25 @@ export interface RenderData {
     deviceName: string
     date: string
     metrics: ReportMetrics
-    rawReport: string
     analysis: ActivityAnalysis
 }
 
 export class ActivityRenderer {
-    private templateDir: string
-
     constructor(
         private ctx: Context,
         private config: Config
-    ) {
-        this.templateDir = path.resolve(ctx.baseDir, 'data/workreview')
-    }
+    ) {}
 
-    async init(): Promise<void> {
-        await fs.mkdir(this.templateDir, { recursive: true })
-        await fs.copyFile(this.getResourcePath('style.css'), this.getStylePath())
-    }
+    async init(): Promise<void> {}
 
     async render(data: RenderData): Promise<Buffer> {
-        await this.init()
+        const [template, css] = await Promise.all([
+            fs.readFile(this.getResourcePath('template.html'), 'utf-8'),
+            fs.readFile(this.getResourcePath('style.css'), 'utf-8')
+        ])
 
-        const template = await fs.readFile(this.getResourcePath('template.html'), 'utf-8')
         const html = renderTemplate(template, {
-            stylePath: './style.css',
-            theme: this.resolveTheme(),
+            inlineStyle: css,
             deviceName: escapeHtml(data.deviceName),
             date: escapeHtml(data.date),
             totalDuration: escapeHtml(data.metrics.totalDuration),
@@ -49,69 +41,80 @@ export class ActivityRenderer {
             appCount: escapeHtml(data.metrics.appCount),
             websiteCount: escapeHtml(data.metrics.websiteCount),
             topApps: this.formatTopApps(data.metrics.topApps),
-            activeLines: formatList(data.metrics.activeLines),
-            rawReport: markdownToHtml(data.rawReport),
+            activeHoursChart: this.generateActiveHoursChart(data.metrics.hourlyActivity),
             summary: escapeHtml(data.analysis.summary || data.analysis.rawText || '暂无分析'),
             efficiency: escapeHtml(data.analysis.efficiency || '暂无评估'),
+            workPattern: escapeHtml(data.analysis.workPattern || '暂无分析'),
+            focusAnalysis: escapeHtml(data.analysis.focusAnalysis || '暂无分析'),
             highlights: formatList(data.analysis.highlights),
             risks: formatList(data.analysis.risks),
             suggestions: formatList(data.analysis.suggestions),
             tags: formatTags(data.analysis.tags)
         })
 
-        const filename = `report-${Date.now()}-${Math.random().toString(36).slice(2)}.html`
-        const htmlPath = path.resolve(this.templateDir, filename)
-        await fs.writeFile(htmlPath, html, 'utf-8')
-
         const page = await this.ctx.puppeteer.page()
         try {
-            await page.goto('file://' + htmlPath, { waitUntil: 'domcontentloaded' })
+            await page.setContent(html, { waitUntil: 'domcontentloaded' })
             await page.evaluate(() => document.fonts.ready)
             const element = await page.$('.container')
             if (!element) throw new Error('无法找到图片模板容器 .container')
             return (await element.screenshot({})) as Buffer
         } finally {
             await page.close().catch(() => undefined)
-            this.ctx.setTimeout(() => {
-                fs.unlink(htmlPath).catch(() => undefined)
-            }, 3 * 60 * 1000)
         }
     }
 
     private formatTopApps(apps: ReportMetrics['topApps']): string {
         if (!apps.length) return '<div class="empty">暂无应用数据</div>'
-        return `
-            <table>
-                <tbody>
-                    ${apps
-                        .map(
-                            (app, index) => `
-                                <tr>
-                                    <td class="rank">${index + 1}</td>
-                                    <td>${escapeHtml(app.name)}</td>
-                                    <td class="duration">${escapeHtml(app.duration)}</td>
-                                </tr>
-                            `
-                        )
-                        .join('')}
-                </tbody>
-            </table>
-        `
+        return apps
+            .map(
+                (app, index) => `
+                <div class="app-item">
+                    <span class="app-rank">${index + 1}</span>
+                    <span class="app-name">${escapeHtml(app.name)}</span>
+                    <span class="app-duration">${escapeHtml(app.duration)}</span>
+                </div>`
+            )
+            .join('')
     }
 
-    private resolveTheme(): 'light' | 'dark' {
-        if (this.config.theme === 'light' || this.config.theme === 'dark') {
-            return this.config.theme
+    private generateActiveHoursChart(activity: HourlyActivity): string {
+        const { hours, maxSeconds } = activity
+        if (maxSeconds === 0) {
+            return '<div class="empty">暂无活跃数据</div>'
         }
-        const hour = new Date().getHours()
-        return hour >= 19 || hour < 6 ? 'dark' : 'light'
+
+        const items = hours.map((seconds, i) => {
+            const percentage = maxSeconds > 0 ? (seconds / maxSeconds) * 100 : 0
+            let color = 'var(--color-purple)'
+            let height = `max(4px, ${percentage}%)`
+
+            if (seconds === 0) {
+                height = '0px'
+            } else if (percentage >= 70) {
+                color = 'var(--accent-orange)'
+            } else if (percentage >= 30) {
+                color = 'var(--color-green)'
+            } else {
+                color = 'var(--color-blue)'
+            }
+
+            const label = String(i).padStart(2, '0')
+            const minutes = Math.round(seconds / 60)
+            const showValue = seconds > 0 ? 'show-value' : ''
+
+            return `
+                <div class="chart-column ${showValue}" title="${label}:00 - ${minutes}分钟">
+                    <div class="bar-value-top">${minutes > 0 ? minutes + 'm' : ''}</div>
+                    <div class="bar-vertical" style="height: ${height}; background-color: ${color};"></div>
+                    <div class="bar-label-x">${label}</div>
+                </div>`
+        })
+
+        return `<div class="chart-container-horizontal">${items.join('')}</div>`
     }
 
     private getResourcePath(filename: string): string {
         return path.resolve(__dirname, '../resources', filename)
-    }
-
-    private getStylePath(): string {
-        return path.resolve(this.templateDir, 'style.css')
     }
 }

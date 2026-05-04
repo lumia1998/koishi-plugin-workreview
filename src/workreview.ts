@@ -14,6 +14,11 @@ export interface ReportsResponse {
     dates: string[]
 }
 
+export interface HourlyActivity {
+    hours: number[]
+    maxSeconds: number
+}
+
 export interface ReportMetrics {
     date: string
     totalDuration: string
@@ -22,6 +27,7 @@ export interface ReportMetrics {
     websiteCount: string
     topApps: Array<{ name: string; duration: string }>
     activeLines: string[]
+    hourlyActivity: HourlyActivity
 }
 
 export class WorkReviewClient {
@@ -86,7 +92,7 @@ export class WorkReviewClient {
                 throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`)
             }
 
-            if (!text) return null
+            if (!text) throw new Error('服务器返回了空响应')
             return JSON.parse(text)
         } finally {
             clearTimeout(timer)
@@ -98,10 +104,11 @@ export class WorkReviewClient {
         path: string,
         withToken: boolean
     ): string {
-        const host = device.host.replace(/^https?:\/\//, '').replace(/\/$/, '')
+        const protocol = device.protocol || 'http'
+        const host = device.host.replace(/^https?:\/\//, '').replace(/\/+$/, '')
         const hasPort = /:\d+$/.test(host)
-        const port = hasPort ? '' : `:${device.port || 47831}`
-        const url = new URL(`${device.protocol || 'http'}://${host}${port}${path}`)
+        const base = `${protocol}://${host}${hasPort ? '' : `:${device.port || 47831}`}`
+        const url = new URL(path, base)
         if (withToken && device.token) url.searchParams.set('token', device.token)
         return url.toString()
     }
@@ -127,6 +134,7 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
             /^-\s*(高峰时段|活跃小时数|主要活跃区间)[:：]/.test(line)
         )
         .map((line) => line.replace(/^[-\s]+/, ''))
+    const hourlyActivity = extractHourlyActivity(rawReport)
 
     return {
         date: date.trim(),
@@ -135,7 +143,8 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
         appCount,
         websiteCount,
         topApps,
-        activeLines
+        activeLines,
+        hourlyActivity
     }
 }
 
@@ -162,6 +171,30 @@ function extractTopApps(rawReport: string): Array<{ name: string; duration: stri
             name: match[1].trim(),
             duration: match[2].trim()
         }))
+}
+
+function extractHourlyActivity(rawReport: string): HourlyActivity {
+    const hours = new Array<number>(24).fill(0)
+    const line = rawReport.split('\n').find((l) => l.includes('主要活跃区间'))
+    if (!line) return { hours, maxSeconds: 0 }
+
+    const bucketPattern = /(\d{2}):\d{2}-\d{2}:\d{2}（([^）]+)）/g
+    let match: RegExpExecArray | null
+    while ((match = bucketPattern.exec(line)) !== null) {
+        const hour = parseInt(match[1], 10)
+        if (hour >= 0 && hour < 24) {
+            hours[hour] = parseDuration(match[2])
+        }
+    }
+
+    return { hours, maxSeconds: Math.max(...hours, 0) }
+}
+
+function parseDuration(text: string): number {
+    const h = parseInt(text.match(/(\d+)小时/)?.[1] ?? '0', 10)
+    const m = parseInt(text.match(/(\d+)分/)?.[1] ?? '0', 10)
+    const s = parseInt(text.match(/(\d+)秒/)?.[1] ?? '0', 10)
+    return h * 3600 + m * 60 + s
 }
 
 function escapeRegExp(value: string): string {
