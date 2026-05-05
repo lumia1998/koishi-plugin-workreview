@@ -27,6 +27,8 @@ export interface Config {
     theme: 'light' | 'dark' | 'auto'
     timeout: number
     autoGenerateMissingReport: boolean
+    cacheReports: boolean
+    cacheIntervalMinutes: number
 }
 
 const DeviceConfig: Schema<DeviceConfig> = Schema.object({
@@ -105,6 +107,13 @@ export const Config: Schema<Config> = Schema.intersect([
         timeout: Schema.number()
             .min(1000)
             .default(30000)
-            .description('API 请求超时时间（毫秒）')
+            .description('API 请求超时时间（毫秒）'),
+        cacheReports: Schema.boolean()
+            .default(true)
+            .description('是否定时缓存日报原文到本地'),
+        cacheIntervalMinutes: Schema.number()
+            .min(1)
+            .default(5)
+            .description('日报缓存刷新间隔（分钟）')
     }).description('输出设置')
 ]) as unknown as Schema<Config>

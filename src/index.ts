@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { Context, h, Session } from 'koishi'
 import type {} from 'koishi-plugin-chatluna'
 import type {} from 'koishi-plugin-puppeteer'
@@ -27,6 +29,18 @@ interface GenerateOptions {
     weekly?: boolean
 }
 
+interface CachedReport {
+    device: string
+    date: string
+    content: string
+    cachedAt: string
+}
+
+interface ReportSource {
+    rawReport: string
+    cachedAt?: string
+}
+
 export function apply(ctx: Context, config: Config) {
     const logger = ctx.logger('workreview')
     const client = new WorkReviewClient(config.timeout)
@@ -43,6 +57,14 @@ export function apply(ctx: Context, config: Config) {
 
     const commandName = config.commandName || '活动日报'
     const subcommands = new Set<string>()
+    const cacheRoot = path.join(ctx.baseDir, 'temp', 'workreview')
+
+    if (config.cacheReports) {
+        ctx.on('ready', async () => {
+            await refreshReportCache()
+        })
+        ctx.setInterval(refreshReportCache, Math.max(config.cacheIntervalMinutes, 1) * 60 * 1000)
+    }
 
     ctx.command(`${commandName} <device> [date]`, '生成活动日报')
         .option('yesterday', '-y, --yesterday 生成昨天的日报')
@@ -72,13 +94,12 @@ export function apply(ctx: Context, config: Config) {
         })
     subcommands.add('原始')
 
-    ctx.command(`${commandName}/周报 <device>`, '生成最近 7 天活动周报')
+    ctx.command('活动周报 <device>', '生成最近 7 天活动周报')
         .action(async ({ session }, deviceName) => {
             if (!session) return
             if (!deviceName) return formatDeviceList(config.devices)
             return sendWeeklyReport(session, deviceName)
         })
-    subcommands.add('周报')
 
     ctx.command(`${commandName}/列表`, '查看已配置设备').action(() =>
         formatDeviceList(config.devices)
@@ -166,13 +187,16 @@ export function apply(ctx: Context, config: Config) {
         try {
             const dates = previousDates(today(), 7)
             const results = await Promise.allSettled(
-                dates.map(async (date) => ({
-                    date,
-                    rawReport: await fetchTruncatedReport(device, date)
-                }))
+                dates.map(async (date) => {
+                    const report = await fetchTruncatedReport(device, date)
+                    return {
+                        date,
+                        ...report
+                    }
+                })
             )
             const rawReports = results
-                .filter((r): r is PromiseFulfilledResult<{ date: string; rawReport: string }> => r.status === 'fulfilled')
+                .filter((r): r is PromiseFulfilledResult<{ date: string } & ReportSource> => r.status === 'fulfilled')
                 .map((r) => r.value)
 
             if (!rawReports.length) {
@@ -192,6 +216,16 @@ export function apply(ctx: Context, config: Config) {
                 analysis,
                 summaryTitle: '每周总结'
             })
+            const cachedReports = rawReports.filter((report) => report.cachedAt)
+
+            if (cachedReports.length) {
+                await session.send(h('message',
+                    h.image(buffer, 'image/png'),
+                    h.text('\n' + formatWeeklyCacheNote(cachedReports))
+                ))
+                return
+            }
+
             await session.send(h.image(buffer, 'image/png'))
         } catch (error) {
             await session.send(formatError(`生成 ${device.name} 周报失败`, error))
@@ -207,14 +241,15 @@ export function apply(ctx: Context, config: Config) {
         if (!device) return formatDeviceNotFound(deviceName)
 
         try {
-            const rawReport = await fetchTruncatedReport(device, date)
-            if (options.raw) return rawReport
+            const report = await fetchTruncatedReport(device, date)
+            const cacheNote = formatCacheNote(report.cachedAt)
+            if (options.raw) return report.rawReport + cacheNote
 
-            const metrics = extractReportMetrics(rawReport, date)
-            const analysis = await llm.analyze(device.name, metrics.date || date, rawReport)
+            const metrics = extractReportMetrics(report.rawReport, date)
+            const analysis = await llm.analyze(device.name, metrics.date || date, report.rawReport)
 
             if (options.text || config.outputMode === 'text') {
-                return formatTextReport(device.name, metrics.date || date, rawReport, analysis)
+                return formatTextReport(device.name, metrics.date || date, report.rawReport, analysis) + cacheNote
             }
 
             const buffer = await renderer.render({
@@ -225,10 +260,13 @@ export function apply(ctx: Context, config: Config) {
                 summaryTitle: '每日总结'
             })
 
-            if (config.outputMode === 'both') {
+            if (config.outputMode === 'both' || report.cachedAt) {
+                const textReport = config.outputMode === 'both'
+                    ? '\n' + formatTextReport(device.name, metrics.date || date, report.rawReport, analysis)
+                    : ''
                 return h('message',
                     h.image(buffer, 'image/png'),
-                    h.text('\n' + formatTextReport(device.name, metrics.date || date, rawReport, analysis))
+                    h.text(textReport + cacheNote)
                 )
             }
 
@@ -242,13 +280,28 @@ export function apply(ctx: Context, config: Config) {
         const device = findDevice(deviceName)
         if (!device) return formatDeviceNotFound(deviceName)
         try {
-            return await fetchTruncatedReport(device, date)
+            const report = await fetchTruncatedReport(device, date)
+            return report.rawReport + formatCacheNote(report.cachedAt)
         } catch (error) {
             return formatError(`获取 ${device.name} ${date} 原始日报失败`, error)
         }
     }
 
-    async function fetchTruncatedReport(device: DeviceConfig, date: string): Promise<string> {
+    async function fetchTruncatedReport(device: DeviceConfig, date: string): Promise<ReportSource> {
+        try {
+            const rawReport = await fetchLiveTruncatedReport(device, date)
+            await writeCachedReport(device, date, rawReport).catch((error) =>
+                logger.warn(`写入 ${device.name} ${date} 日报缓存失败。`, error)
+            )
+            return { rawReport }
+        } catch (error) {
+            const cached = await readCachedReport(device, date)
+            if (cached) return cached
+            throw error
+        }
+    }
+
+    async function fetchLiveTruncatedReport(device: DeviceConfig, date: string): Promise<string> {
         try {
             const report = await client.getReport(device, date)
             return truncateRawReport(report.content || '')
@@ -257,6 +310,55 @@ export function apply(ctx: Context, config: Config) {
             const report = await client.generateReport(device, date)
             return truncateRawReport(report.content || '')
         }
+    }
+
+    async function refreshReportCache() {
+        await Promise.allSettled(
+            config.devices.map(async (device) => {
+                const date = today()
+                try {
+                    const rawReport = await fetchLiveTruncatedReport(device, date)
+                    await writeCachedReport(device, date, rawReport)
+                } catch (error) {
+                    logger.debug(`刷新 ${device.name} ${date} 日报缓存失败。`, error)
+                }
+            })
+        )
+    }
+
+    async function writeCachedReport(device: DeviceConfig, date: string, rawReport: string) {
+        const file = getCacheFile(device, date)
+        await fs.mkdir(path.dirname(file), { recursive: true })
+        const data: CachedReport = {
+            device: device.name,
+            date,
+            content: rawReport,
+            cachedAt: new Date().toISOString()
+        }
+        await fs.writeFile(file, JSON.stringify(data), 'utf8')
+    }
+
+    async function readCachedReport(device: DeviceConfig, date: string): Promise<ReportSource | null> {
+        try {
+            const data = JSON.parse(await fs.readFile(getCacheFile(device, date), 'utf8')) as Partial<CachedReport>
+            if (typeof data.content !== 'string' || typeof data.cachedAt !== 'string') return null
+            return {
+                rawReport: data.content,
+                cachedAt: data.cachedAt
+            }
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code
+            if (code !== 'ENOENT') logger.warn(`读取 ${device.name} ${date} 日报缓存失败。`, error)
+            return null
+        }
+    }
+
+    function getCacheFile(device: DeviceConfig, date: string): string {
+        return path.join(cacheRoot, safePathSegment(device.name), `${date}.json`)
+    }
+
+    function safePathSegment(value: string): string {
+        return value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'device'
     }
 
     function findDevice(name?: string): DeviceConfig | undefined {
@@ -300,6 +402,23 @@ function formatTextReport(
         `## ${summaryTitle}`,
         analysis.text || '暂无分析'
     ].join('\n')
+}
+
+function formatCacheNote(cachedAt?: string): string {
+    return cachedAt ? `\n\n> 当前使用缓存数据，缓存时间：${formatDateTime(cachedAt)}` : ''
+}
+
+function formatWeeklyCacheNote(reports: Array<{ date: string; cachedAt?: string }>): string {
+    const lines = reports
+        .filter((report) => report.cachedAt)
+        .map((report) => `- ${report.date}：${formatDateTime(report.cachedAt || '')}`)
+    return `当前周报包含缓存数据：\n${lines.join('\n')}`
+}
+
+function formatDateTime(value: string): string {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    return date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function timeToCron(time: string): string | null {
