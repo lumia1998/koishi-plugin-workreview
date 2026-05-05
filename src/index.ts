@@ -73,12 +73,13 @@ export function apply(ctx: Context, config: Config) {
         .action(async ({ session, options }, deviceName, dateArg) => {
             if (!session) return
             if (isReservedSubcommand(deviceName, subcommands)) return
-            if (!deviceName) return formatDeviceList(config.devices)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            if (!resolvedDevice) return formatDeviceList(config.devices)
 
             const date = resolveDate(dateArg, options?.yesterday)
             if (!date) return '日期格式错误，请使用 YYYY-MM-DD，或使用 -y 表示昨天。'
 
-            return sendReport(session, deviceName, date, {
+            return sendReport(session, resolvedDevice, date, {
                 raw: options?.raw,
                 text: options?.text
             })
@@ -87,18 +88,20 @@ export function apply(ctx: Context, config: Config) {
     ctx.command(`${commandName}/原始 <device> [date]`, '查看截断后的原始日报')
         .option('yesterday', '-y, --yesterday 查看昨天')
         .action(async (_, deviceName, dateArg) => {
-            if (!deviceName) return formatDeviceList(config.devices)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            if (!resolvedDevice) return formatDeviceList(config.devices)
             const date = resolveDate(dateArg, _.options?.yesterday)
             if (!date) return '日期格式错误，请使用 YYYY-MM-DD，或使用 -y 表示昨天。'
-            return generateRawReport(deviceName, date)
+            return generateRawReport(resolvedDevice, date)
         })
     subcommands.add('原始')
 
     ctx.command('活动周报 <device>', '生成最近 7 天活动周报')
         .action(async ({ session }, deviceName) => {
             if (!session) return
-            if (!deviceName) return formatDeviceList(config.devices)
-            return sendWeeklyReport(session, deviceName)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            if (!resolvedDevice) return formatDeviceList(config.devices)
+            return sendWeeklyReport(session, resolvedDevice)
         })
 
     ctx.command(`${commandName}/列表`, '查看已配置设备').action(() =>
@@ -365,6 +368,10 @@ export function apply(ctx: Context, config: Config) {
         if (!name) return undefined
         const normalized = name.trim().toLowerCase()
         return config.devices.find((device) => device.name.trim().toLowerCase() === normalized)
+    }
+
+    function defaultDeviceName(): string | undefined {
+        return config.devices.length === 1 ? config.devices[0].name : undefined
     }
 }
 

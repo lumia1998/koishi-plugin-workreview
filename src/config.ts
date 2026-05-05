@@ -32,8 +32,8 @@ export interface Config {
 }
 
 const DeviceConfig: Schema<DeviceConfig> = Schema.object({
-    name: Schema.string().required().description('设备备注名，例如：家'),
-    host: Schema.string().required().description('设备 IP 或域名，例如：10.1.2.200'),
+    name: Schema.string().required().description('设备备注名'),
+    host: Schema.string().required().description('设备 IP 或域名'),
     port: Schema.number().default(47831).description('Work_Review API 端口'),
     protocol: Schema.union([
         Schema.const('http').description('HTTP'),
