@@ -6,8 +6,6 @@ import type { ActivityAnalysis } from './llm.js'
 import type { HourlyActivity, ReportMetrics } from './workreview.js'
 import {
     escapeHtml,
-    formatList,
-    formatTags,
     renderTemplate
 } from './utils.js'
 
@@ -16,24 +14,26 @@ export interface RenderData {
     date: string
     metrics: ReportMetrics
     analysis: ActivityAnalysis
+    summaryTitle: string
 }
 
 export class ActivityRenderer {
+    private template: string | null = null
+    private css: string | null = null
+
     constructor(
         private ctx: Context,
         private config: Config
     ) {}
 
-    async init(): Promise<void> {}
+    async init(): Promise<void> {
+        await this.loadResources()
+    }
 
     async render(data: RenderData): Promise<Buffer> {
-        const [template, css] = await Promise.all([
-            fs.readFile(this.getResourcePath('template.html'), 'utf-8'),
-            fs.readFile(this.getResourcePath('style.css'), 'utf-8')
-        ])
-
+        const [template, css] = await this.loadResources()
         const html = renderTemplate(template, {
-            inlineStyle: css,
+            inlineStyle: this.applyTheme(css),
             deviceName: escapeHtml(data.deviceName),
             date: escapeHtml(data.date),
             totalDuration: escapeHtml(data.metrics.totalDuration),
@@ -42,26 +42,41 @@ export class ActivityRenderer {
             websiteCount: escapeHtml(data.metrics.websiteCount),
             topApps: this.formatTopApps(data.metrics.topApps),
             activeHoursChart: this.generateActiveHoursChart(data.metrics.hourlyActivity),
-            summary: escapeHtml(data.analysis.summary || data.analysis.rawText || '暂无分析'),
-            efficiency: escapeHtml(data.analysis.efficiency || '暂无评估'),
-            workPattern: escapeHtml(data.analysis.workPattern || '暂无分析'),
-            focusAnalysis: escapeHtml(data.analysis.focusAnalysis || '暂无分析'),
-            highlights: formatList(data.analysis.highlights),
-            risks: formatList(data.analysis.risks),
-            suggestions: formatList(data.analysis.suggestions),
-            tags: formatTags(data.analysis.tags)
+            summaryTitle: escapeHtml(data.summaryTitle),
+            summary: escapeHtml(data.analysis.text || '暂无分析')
         })
 
         const page = await this.ctx.puppeteer.page()
         try {
             await page.setContent(html, { waitUntil: 'domcontentloaded' })
-            await page.evaluate(() => document.fonts.ready)
+            await Promise.race([
+                page.evaluate(() => document.fonts.ready),
+                new Promise((resolve) => setTimeout(resolve, 5000))
+            ])
             const element = await page.$('.container')
             if (!element) throw new Error('无法找到图片模板容器 .container')
             return (await element.screenshot({})) as Buffer
         } finally {
             await page.close().catch(() => undefined)
         }
+    }
+
+    private async loadResources(): Promise<[string, string]> {
+        if (this.template && this.css) return [this.template, this.css]
+        const [template, css] = await Promise.all([
+            fs.readFile(this.getResourcePath('template.html'), 'utf-8'),
+            fs.readFile(this.getResourcePath('style.css'), 'utf-8')
+        ])
+        this.template = template
+        this.css = css
+        return [template, css]
+    }
+
+    private applyTheme(css: string): string {
+        const darkTheme = ':root { --bg-paper: #1f1b24; --ink-primary: #f3e8ff; --ink-secondary: #d6c2e8; } body { background-color: var(--bg-paper); } .container, .title-sticker, .stamp, .app-ranking, .chart-section, .summary-note, .analysis-card { background: #2a2433; } .summary-note { box-shadow: 4px 4px 5px rgba(0, 0, 0, 0.35); }'
+        if (this.config.theme === 'dark') return `${css}\n${darkTheme}`
+        if (this.config.theme === 'auto') return `${css}\n@media (prefers-color-scheme: dark) { ${darkTheme} }`
+        return css
     }
 
     private formatTopApps(apps: ReportMetrics['topApps']): string {

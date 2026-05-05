@@ -7,6 +7,7 @@ import { Config, type DeviceConfig } from './config.js'
 import { ActivityLLM } from './llm.js'
 import { ActivityRenderer } from './renderer.js'
 import {
+    aggregateReportMetrics,
     extractReportMetrics,
     truncateRawReport,
     WorkReviewClient
@@ -14,7 +15,10 @@ import {
 import { isDateString, previousDates, today, yesterday } from './utils.js'
 
 export const name = 'workreview'
-export const inject = ['chatluna', 'puppeteer']
+export const inject = {
+    required: ['chatluna', 'puppeteer'],
+    optional: ['cron']
+}
 export { Config }
 
 interface GenerateOptions {
@@ -135,7 +139,8 @@ export function apply(ctx: Context, config: Config) {
 
             ctx.effect(() =>
                 ctx.cron(cron, async () => {
-                    const message = await buildReportMessage(push.device, today())
+                    const date = push.reportDate === 'today' ? today() : yesterday()
+                    const message = await buildReportMessage(push.device, date)
                     await ctx.broadcast(push.channels, message)
                 })
             )
@@ -156,23 +161,36 @@ export function apply(ctx: Context, config: Config) {
         const device = findDevice(deviceName)
         if (!device) return session.send(formatDeviceNotFound(deviceName))
 
+        await session.send('正在生成周报，请稍候...')
+
         try {
             const dates = previousDates(today(), 7)
-            const rawReports = await Promise.all(
-                dates.map(async (date) => {
-                    const raw = await fetchTruncatedReport(device, date)
-                    return `## ${date}\n\n${raw}`
-                })
+            const results = await Promise.allSettled(
+                dates.map(async (date) => ({
+                    date,
+                    rawReport: await fetchTruncatedReport(device, date)
+                }))
             )
+            const rawReports = results
+                .filter((r): r is PromiseFulfilledResult<{ date: string; rawReport: string }> => r.status === 'fulfilled')
+                .map((r) => r.value)
 
-            const rawReport = rawReports.join('\n\n---\n\n')
-            const analysis = await llm.analyze(device.name, `${dates.at(-1)} ~ ${dates[0]}`, rawReport)
-            const metrics = extractReportMetrics(rawReports[0], dates[0])
+            if (!rawReports.length) {
+                return session.send(`${device.name} 最近 7 天没有可用的日报数据。`)
+            }
+
+            const dateRange = `${dates.at(-1)} ~ ${dates[0]}`
+            const rawReport = rawReports
+                .map((report) => `## ${report.date}\n\n${report.rawReport}`)
+                .join('\n\n---\n\n')
+            const analysis = await llm.analyze(device.name, dateRange, rawReport)
+            const metrics = aggregateReportMetrics(rawReports, dateRange)
             const buffer = await renderer.render({
                 deviceName: `${device.name} 最近 7 天`,
-                date: `${dates.at(-1)} ~ ${dates[0]}`,
+                date: dateRange,
                 metrics,
-                analysis
+                analysis,
+                summaryTitle: '每周总结'
             })
             await session.send(h.image(buffer, 'image/png'))
         } catch (error) {
@@ -203,7 +221,8 @@ export function apply(ctx: Context, config: Config) {
                 deviceName: device.name,
                 date: metrics.date || date,
                 metrics,
-                analysis
+                analysis,
+                summaryTitle: '每日总结'
             })
 
             if (config.outputMode === 'both') {
@@ -242,7 +261,8 @@ export function apply(ctx: Context, config: Config) {
 
     function findDevice(name?: string): DeviceConfig | undefined {
         if (!name) return undefined
-        return config.devices.find((device) => device.name === name)
+        const normalized = name.trim().toLowerCase()
+        return config.devices.find((device) => device.name.trim().toLowerCase() === normalized)
     }
 }
 
@@ -269,45 +289,17 @@ function formatError(prefix: string, error: unknown): string {
 function formatTextReport(
     deviceName: string,
     date: string,
-    rawReport: string,
-    analysis: { summary?: string; efficiency?: string; workPattern?: string; focusAnalysis?: string; highlights?: string[]; risks?: string[]; suggestions?: string[]; tags?: string[]; rawText?: string }
+    _rawReport: string,
+    analysis: { text: string },
+    summaryTitle = '每日总结'
 ): string {
-    if (analysis.rawText && !analysis.summary) return analysis.rawText
-    const sections = [
-        `# ${deviceName} 活动日报 ${date}`,
+    const reportTitle = summaryTitle === '每周总结' ? '活动周报' : '活动日报'
+    return [
+        `# ${deviceName} ${reportTitle} ${date}`,
         '',
-        `## AI 总结`,
-        analysis.summary || '暂无分析',
-        '',
-        `## 效率评估`,
-        analysis.efficiency || '暂无评估',
-    ]
-    if (analysis.workPattern) {
-        sections.push('', `## 工作模式`, analysis.workPattern)
-    }
-    if (analysis.focusAnalysis) {
-        sections.push('', `## 专注分析`, analysis.focusAnalysis)
-    }
-    sections.push(
-        '',
-        `## 亮点`,
-        formatMarkdownList(analysis.highlights),
-        '',
-        `## 风险`,
-        formatMarkdownList(analysis.risks),
-        '',
-        `## 建议`,
-        formatMarkdownList(analysis.suggestions),
-        '',
-        `## 原始数据`,
-        rawReport
-    )
-    return sections.join('\n')
-}
-
-function formatMarkdownList(items?: string[]): string {
-    const list = items?.filter(Boolean) ?? []
-    return list.length ? list.map((item) => `- ${item}`).join('\n') : '- 暂无'
+        `## ${summaryTitle}`,
+        analysis.text || '暂无分析'
+    ].join('\n')
 }
 
 function timeToCron(time: string): string | null {

@@ -12,6 +12,7 @@ export interface PushConfig {
     device: string
     channels: string[]
     time: string
+    reportDate: 'today' | 'yesterday'
     enabled: boolean
 }
 
@@ -50,6 +51,12 @@ const PushConfig: Schema<PushConfig> = Schema.object({
     time: Schema.string()
         .default('22:00')
         .description('每天推送时间，格式 HH:mm'),
+    reportDate: Schema.union([
+        Schema.const('yesterday').description('昨天（推荐）'),
+        Schema.const('today').description('今天')
+    ])
+        .default('yesterday')
+        .description('推送哪天的日报'),
     enabled: Schema.boolean().default(true).description('是否启用')
 })
 
@@ -77,8 +84,8 @@ export const Config: Schema<Config> = Schema.intersect([
             .description('模型温度'),
         stylePrompt: Schema.string()
             .role('textarea')
-            .default('你是一个专业的工作活动分析助手。语气简洁客观，重点给出洞察和可执行的建议。')
-            .description('AI 分析风格/人设描述。只需要描述语气和风格，输出格式由系统自动处理。')
+            .default('你是一个活泼的日报总结助手。用轻松口语化的方式总结用户一天做了什么，可以适当吐槽。')
+            .description('AI 总结风格/人设描述。控制输出的语气和风格。')
     }).description('ChatLuna 设置'),
     Schema.object({
         outputMode: Schema.union([
