@@ -141,7 +141,7 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
         .filter((line) => /(高峰时段|活跃小时数|主要活跃区间)\s*[:：]/.test(line))
         .map((line) => line.replace(/^[-*\s]+/, ''))
     const hourlyActivity = extractHourlyActivity(rawReport)
-    const hourlyAppBreakdown = extractHourlyAppBreakdown(rawReport, topApps)
+    const hourlyAppBreakdown = extractHourlyAppBreakdown(rawReport)
 
     return {
         date: date.trim(),
@@ -291,10 +291,7 @@ function extractHourlyActivity(rawReport: string): HourlyActivity {
     return { hours, maxSeconds: Math.max(...hours, 0) }
 }
 
-function extractHourlyAppBreakdown(
-    rawReport: string,
-    topApps: Array<{ name: string; duration: string }>
-): HourlyAppBreakdown {
+function extractHourlyAppBreakdown(rawReport: string): HourlyAppBreakdown {
     const hours: Array<Array<{ app: string; seconds: number }>> = Array.from({ length: 24 }, () => [])
 
     // Pattern 1: "09:15 - 09:45 AppName（30分）" or "09:15-09:45 AppName (30分钟)"
@@ -352,24 +349,6 @@ function extractHourlyAppBreakdown(
             if (seconds <= 0) continue
             found = true
             addToHour(hours, startHour, appName, seconds)
-        }
-    }
-
-    // Fallback: distribute top apps proportionally into hours that have activity
-    if (!found && topApps.length > 0) {
-        const hourlyActivity = extractHourlyActivity(rawReport)
-        const totalAppSeconds = topApps.reduce((sum, app) => sum + parseDuration(app.duration), 0)
-        if (totalAppSeconds > 0) {
-            for (let h = 0; h < 24; h++) {
-                if (hourlyActivity.hours[h] <= 0) continue
-                for (const app of topApps) {
-                    const ratio = parseDuration(app.duration) / totalAppSeconds
-                    const seconds = Math.round(hourlyActivity.hours[h] * ratio)
-                    if (seconds > 0) {
-                        hours[h].push({ app: app.name, seconds })
-                    }
-                }
-            }
         }
     }
 

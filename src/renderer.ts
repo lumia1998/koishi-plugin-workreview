@@ -89,12 +89,16 @@ export class ActivityRenderer {
         metrics: ReportMetrics,
         colorMap: Map<string, string>
     ): string {
-        const { hours: hourlyApps, maxSeconds } = metrics.hourlyAppBreakdown
+        const breakdown = metrics.hourlyAppBreakdown
+        const useBreakdown = breakdown.maxSeconds > 0 && breakdown.hours.some((entries) => entries.length > 0)
+        const hours = useBreakdown ? breakdown.hours : metrics.hourlyActivity.hours.map((seconds) => [{ app: '__total__', seconds }])
+        const maxSeconds = useBreakdown ? breakdown.maxSeconds : metrics.hourlyActivity.maxSeconds
+
         if (maxSeconds === 0) {
             return '<div class="empty">暂无活跃数据</div>'
         }
 
-        const items = hourlyApps.map((entries, i) => {
+        const items = hours.map((entries, i) => {
             const totalSeconds = entries.reduce((sum, e) => sum + e.seconds, 0)
             const percentage = maxSeconds > 0 ? (totalSeconds / maxSeconds) * 100 : 0
             const label = String(i).padStart(2, '0')
@@ -108,14 +112,17 @@ export class ActivityRenderer {
             }
 
             const height = `max(4px, ${percentage}%)`
-            const segments = entries
-                .sort((a, b) => b.seconds - a.seconds)
-                .map((entry) => {
-                    const color = colorMap.get(entry.app) || '#ccc'
-                    const flex = entry.seconds / totalSeconds
-                    return `<div class="bar-segment" style="flex: ${flex}; background-color: ${color};"></div>`
-                })
-                .join('')
+            const segments = useBreakdown
+                ? entries
+                    .slice()
+                    .sort((a, b) => b.seconds - a.seconds)
+                    .map((entry) => {
+                        const color = colorMap.get(entry.app) || '#ccc'
+                        const flex = entry.seconds / totalSeconds
+                        return `<div class="bar-segment" style="flex: ${flex}; background-color: ${color};"></div>`
+                    })
+                    .join('')
+                : `<div class="bar-segment" style="flex: 1; background-color: #cdd6e4;"></div>`
 
             const minutes = Math.round(totalSeconds / 60)
             return `
