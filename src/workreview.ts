@@ -278,7 +278,7 @@ function parseAppListLine(line: string): { name: string; duration: string } | nu
 
 function extractHourlyActivity(rawReport: string): HourlyActivity {
     const hours = new Array<number>(24).fill(0)
-    const bucketPattern = /(\d{1,2}):\d{2}\s*-\s*\d{1,2}:\d{2}\s*[（(]([^）)]+)[）)]/g
+    const bucketPattern = /(\d{1,2}):\d{2}\s*[-–]\s*\d{1,2}:\d{2}\s*[（(]([^）)]+)[）)]/g
     let match: RegExpExecArray | null
 
     while ((match = bucketPattern.exec(rawReport)) !== null) {
