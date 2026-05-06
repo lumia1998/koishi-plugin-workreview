@@ -2,12 +2,17 @@ import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import path from 'path'
 import type { Config } from './config.js'
-import type { ActivityAnalysis } from './llm.js'
-import type { HourlyActivity, ReportMetrics } from './workreview.js'
+import type { ActivityAnalysis, AppComment } from './llm.js'
+import type { ReportMetrics } from './workreview.js'
 import {
     escapeHtml,
     renderTemplate
 } from './utils.js'
+
+const APP_COLORS = [
+    '#ff7043', '#42a5f5', '#66bb6a', '#ab47bc',
+    '#ffa726', '#26c6da', '#ec407a', '#8d6e63'
+]
 
 export interface RenderData {
     deviceName: string
@@ -32,18 +37,19 @@ export class ActivityRenderer {
 
     async render(data: RenderData): Promise<Buffer> {
         const [template, css] = await this.loadResources()
+        const topApps = data.metrics.topApps.slice(0, 8)
+        const colorMap = new Map(topApps.map((app, i) => [app.name, APP_COLORS[i % APP_COLORS.length]]))
+
         const html = renderTemplate(template, {
             inlineStyle: this.applyTheme(css),
             deviceName: escapeHtml(data.deviceName),
             date: escapeHtml(data.date),
             totalDuration: escapeHtml(data.metrics.totalDuration),
-            screenshotCount: escapeHtml(data.metrics.screenshotCount),
-            appCount: escapeHtml(data.metrics.appCount),
-            websiteCount: escapeHtml(data.metrics.websiteCount),
-            topApps: this.formatTopApps(data.metrics.topApps),
-            activeHoursChart: this.generateActiveHoursChart(data.metrics.hourlyActivity),
+            activityChart: this.generateCombinedChart(data.metrics, colorMap),
+            appLegend: this.generateLegend(topApps, colorMap),
+            topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
             summaryTitle: escapeHtml(data.summaryTitle),
-            summary: escapeHtml(data.analysis.text || '暂无分析')
+            summary: escapeHtml(truncateSummary(data.analysis.text || '暂无分析', 200))
         })
 
         const page = await this.ctx.puppeteer.page()
@@ -73,55 +79,52 @@ export class ActivityRenderer {
     }
 
     private applyTheme(css: string): string {
-        const darkTheme = ':root { --bg-paper: #1f1b24; --ink-primary: #f3e8ff; --ink-secondary: #d6c2e8; } body { background-color: var(--bg-paper); } .container, .title-sticker, .stamp, .app-ranking, .chart-section, .summary-note, .analysis-card { background: #2a2433; } .summary-note { box-shadow: 4px 4px 5px rgba(0, 0, 0, 0.35); }'
+        const darkTheme = ':root { --bg-paper: #1f1b24; --ink-primary: #f3e8ff; --ink-secondary: #d6c2e8; } body { background-color: var(--bg-paper); } .container, .title-sticker, .chart-section, .summary-note, .analysis-card { background: #2a2433; }'
         if (this.config.theme === 'dark') return `${css}\n${darkTheme}`
         if (this.config.theme === 'auto') return `${css}\n@media (prefers-color-scheme: dark) { ${darkTheme} }`
         return css
     }
 
-    private formatTopApps(apps: ReportMetrics['topApps']): string {
-        if (!apps.length) return '<div class="empty">暂无应用数据</div>'
-        return apps
-            .map(
-                (app, index) => `
-                <div class="app-item">
-                    <span class="app-rank">${index + 1}</span>
-                    <span class="app-name">${escapeHtml(app.name)}</span>
-                    <span class="app-duration">${escapeHtml(app.duration)}</span>
-                </div>`
-            )
-            .join('')
-    }
-
-    private generateActiveHoursChart(activity: HourlyActivity): string {
-        const { hours, maxSeconds } = activity
+    private generateCombinedChart(
+        metrics: ReportMetrics,
+        colorMap: Map<string, string>
+    ): string {
+        const { hours, maxSeconds } = metrics.hourlyActivity
         if (maxSeconds === 0) {
             return '<div class="empty">暂无活跃数据</div>'
         }
 
+        const topApps = metrics.topApps.slice(0, 8)
+        const totalAppSeconds = topApps.reduce((sum, app) => sum + parseDurationSeconds(app.duration), 0)
+        const appRatios = topApps.map((app) => ({
+            name: app.name,
+            ratio: totalAppSeconds > 0 ? parseDurationSeconds(app.duration) / totalAppSeconds : 0,
+            color: colorMap.get(app.name) || '#ccc'
+        }))
+
         const items = hours.map((seconds, i) => {
             const percentage = maxSeconds > 0 ? (seconds / maxSeconds) * 100 : 0
-            let color = 'var(--color-purple)'
-            let height = `max(4px, ${percentage}%)`
+            const label = String(i).padStart(2, '0')
 
             if (seconds === 0) {
-                height = '0px'
-            } else if (percentage >= 70) {
-                color = 'var(--accent-orange)'
-            } else if (percentage >= 30) {
-                color = 'var(--color-green)'
-            } else {
-                color = 'var(--color-blue)'
+                return `
+                <div class="chart-column" title="${label}:00">
+                    <div class="bar-stack" style="height: 0px;"></div>
+                    <div class="bar-label-x">${label}</div>
+                </div>`
             }
 
-            const label = String(i).padStart(2, '0')
-            const minutes = Math.round(seconds / 60)
-            const showValue = seconds > 0 ? 'show-value' : ''
+            const height = `max(4px, ${percentage}%)`
+            const segments = appRatios
+                .filter((app) => app.ratio > 0)
+                .map((app) => `<div class="bar-segment" style="flex: ${app.ratio}; background-color: ${app.color};"></div>`)
+                .join('')
 
+            const minutes = Math.round(seconds / 60)
             return `
-                <div class="chart-column ${showValue}" title="${label}:00 - ${minutes}分钟">
+                <div class="chart-column show-value" title="${label}:00 - ${minutes}分钟">
                     <div class="bar-value-top">${minutes > 0 ? minutes + 'm' : ''}</div>
-                    <div class="bar-vertical" style="height: ${height}; background-color: ${color};"></div>
+                    <div class="bar-stack" style="height: ${height};">${segments}</div>
                     <div class="bar-label-x">${label}</div>
                 </div>`
         })
@@ -129,7 +132,71 @@ export class ActivityRenderer {
         return `<div class="chart-container-horizontal">${items.join('')}</div>`
     }
 
+    private generateLegend(
+        topApps: ReportMetrics['topApps'],
+        colorMap: Map<string, string>
+    ): string {
+        if (!topApps.length) return ''
+        return topApps
+            .map((app) => {
+                const color = colorMap.get(app.name) || '#ccc'
+                return `<div class="legend-item"><span class="legend-dot" style="background:${color};"></span><span class="legend-name">${escapeHtml(app.name)}</span></div>`
+            })
+            .join('')
+    }
+
+    private generateTopAppsComments(
+        topApps: ReportMetrics['topApps'],
+        appComments: AppComment[]
+    ): string {
+        const top3 = topApps.slice(0, 3)
+        if (!top3.length) return '<div class="empty">暂无应用数据</div>'
+
+        return top3
+            .map((app, index) => {
+                const comment = appComments.find(
+                    (c) => normalizeAppName(c.name).includes(normalizeAppName(app.name)) || normalizeAppName(app.name).includes(normalizeAppName(c.name))
+                )
+                const commentText = comment?.comment || buildFallbackComment(app.name, index + 1)
+                return `
+                <div class="top-app-item">
+                    <div class="top-app-header">
+                        <span class="top-app-rank">${index + 1}</span>
+                        <span class="top-app-name">${escapeHtml(app.name)}</span>
+                        <span class="top-app-duration">${escapeHtml(app.duration)}</span>
+                    </div>
+                    <div class="top-app-comment">${escapeHtml(commentText)}</div>
+                </div>`
+            })
+            .join('')
+    }
+
     private getResourcePath(filename: string): string {
         return path.resolve(__dirname, '../resources', filename)
     }
+}
+
+function normalizeAppName(value: string): string {
+    return value.toLowerCase().replace(/[\s._-]+/g, '')
+}
+
+function buildFallbackComment(appName: string, rank: number): string {
+    if (/chrome|edge|浏览器/i.test(appName)) return '浏览器开得很勤，看来今天又在四处找答案。'
+    if (/qq|微信|wechat|telegram|slack|discord/i.test(appName)) return '消息窗口常驻，注意力也被它顺手接管了。'
+    if (/vscode|cursor|code|ide/i.test(appName)) return '和代码缠斗的痕迹很明显，今天没少动脑。'
+    if (/excel|spreadsheet|表格/i.test(appName)) return '表格味很重，应该是在和数字认真较劲。'
+    if (/notion|obsidian|docs|word|文档/i.test(appName)) return '文档型工作不少，脑子和页面一起在转。'
+    return `第${rank}名选手，今天存在感不低。`
+}
+
+function truncateSummary(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text
+    return text.slice(0, maxLength) + '...'
+}
+
+function parseDurationSeconds(text: string): number {
+    const h = parseInt(text.match(/(\d+)\s*(?:小时|时|h)/i)?.[1] ?? '0', 10)
+    const m = parseInt(text.match(/(\d+)\s*(?:分钟|分|m)/i)?.[1] ?? '0', 10)
+    const s = parseInt(text.match(/(\d+)\s*(?:秒|s)/i)?.[1] ?? '0', 10)
+    return h * 3600 + m * 60 + s
 }

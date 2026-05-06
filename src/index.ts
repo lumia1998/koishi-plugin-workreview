@@ -26,7 +26,7 @@ export { Config }
 interface GenerateOptions {
     raw?: boolean
     text?: boolean
-    weekly?: boolean
+    list?: boolean
 }
 
 interface CachedReport {
@@ -66,17 +66,21 @@ export function apply(ctx: Context, config: Config) {
         ctx.setInterval(refreshReportCache, Math.max(config.cacheIntervalMinutes, 1) * 60 * 1000)
     }
 
-    ctx.command(`${commandName} <device> [date]`, '生成活动日报')
+    ctx.command(`${commandName} [device] [date]`, '生成活动日报')
+        .alias('日报')
         .option('yesterday', '-y, --yesterday 生成昨天的日报')
         .option('raw', '-r, --raw 只返回原始日报数据')
         .option('text', '-t, --text 以文本形式返回 AI 分析')
+        .option('list', '-l, --list 查看已配置设备')
         .action(async ({ session, options }, deviceName, dateArg) => {
             if (!session) return
+            if (options?.list) return formatDeviceList(config.devices)
             if (isReservedSubcommand(deviceName, subcommands)) return
-            const resolvedDevice = deviceName || defaultDeviceName()
+            const { deviceName: resolvedDeviceName, dateArg: resolvedDateArg } = resolveDeviceAndDate(deviceName, dateArg)
+            const resolvedDevice = resolvedDeviceName || defaultDeviceName()
             if (!resolvedDevice) return formatDeviceList(config.devices)
 
-            const date = resolveDate(dateArg, options?.yesterday)
+            const date = resolveDate(resolvedDateArg, options?.yesterday)
             if (!date) return '日期格式错误，请使用 YYYY-MM-DD，或使用 -y 表示昨天。'
 
             return sendReport(session, resolvedDevice, date, {
@@ -85,34 +89,38 @@ export function apply(ctx: Context, config: Config) {
             })
         })
 
-    ctx.command(`${commandName}/原始 <device> [date]`, '查看截断后的原始日报')
+    ctx.command(`${commandName}/原始 [device] [date]`, '查看截断后的原始日报')
         .option('yesterday', '-y, --yesterday 查看昨天')
         .action(async (_, deviceName, dateArg) => {
-            const resolvedDevice = deviceName || defaultDeviceName()
+            const { deviceName: resolvedDeviceName, dateArg: resolvedDateArg } = resolveDeviceAndDate(deviceName, dateArg)
+            const resolvedDevice = resolvedDeviceName || defaultDeviceName()
             if (!resolvedDevice) return formatDeviceList(config.devices)
-            const date = resolveDate(dateArg, _.options?.yesterday)
+            const date = resolveDate(resolvedDateArg, _.options?.yesterday)
             if (!date) return '日期格式错误，请使用 YYYY-MM-DD，或使用 -y 表示昨天。'
             return generateRawReport(resolvedDevice, date)
         })
     subcommands.add('原始')
 
-    ctx.command('活动周报 <device>', '生成最近 7 天活动周报')
+    ctx.command(`${commandName}/周报 [device]`, '生成最近 7 天活动周报')
+        .alias('周报')
         .action(async ({ session }, deviceName) => {
             if (!session) return
             const resolvedDevice = deviceName || defaultDeviceName()
             if (!resolvedDevice) return formatDeviceList(config.devices)
             return sendWeeklyReport(session, resolvedDevice)
         })
+    subcommands.add('周报')
 
     ctx.command(`${commandName}/列表`, '查看已配置设备').action(() =>
         formatDeviceList(config.devices)
     )
     subcommands.add('列表')
 
-    ctx.command(`${commandName}/日报列表 <device>`, '查看设备已有日报日期').action(
+    ctx.command(`${commandName}/日报列表 [device]`, '查看设备已有日报日期').action(
         async (_, deviceName) => {
-            const device = findDevice(deviceName)
-            if (!device) return formatDeviceNotFound(deviceName)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            const device = findDevice(resolvedDevice)
+            if (!device) return formatDeviceNotFound(resolvedDevice)
             try {
                 const reports = await client.listReports(device)
                 return reports.dates?.length
@@ -125,10 +133,11 @@ export function apply(ctx: Context, config: Config) {
     )
     subcommands.add('日报列表')
 
-    ctx.command(`${commandName}/设备信息 <device>`, '查看 Work_Review 设备信息').action(
+    ctx.command(`${commandName}/设备信息 [device]`, '查看 Work_Review 设备信息').action(
         async (_, deviceName) => {
-            const device = findDevice(deviceName)
-            if (!device) return formatDeviceNotFound(deviceName)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            const device = findDevice(resolvedDevice)
+            if (!device) return formatDeviceNotFound(resolvedDevice)
             try {
                 const info = await client.deviceInfo(device)
                 return `设备信息：\n${JSON.stringify(info, null, 2)}`
@@ -139,10 +148,11 @@ export function apply(ctx: Context, config: Config) {
     )
     subcommands.add('设备信息')
 
-    ctx.command(`${commandName}/健康 <device>`, '查看 Work_Review 健康状态').action(
+    ctx.command(`${commandName}/健康 [device]`, '查看 Work_Review 健康状态').action(
         async (_, deviceName) => {
-            const device = findDevice(deviceName)
-            if (!device) return formatDeviceNotFound(deviceName)
+            const resolvedDevice = deviceName || defaultDeviceName()
+            const device = findDevice(resolvedDevice)
+            if (!device) return formatDeviceNotFound(resolvedDevice)
             try {
                 const info = await client.health(device)
                 return `健康状态：\n${JSON.stringify(info, null, 2)}`
@@ -177,6 +187,7 @@ export function apply(ctx: Context, config: Config) {
         date: string,
         options: GenerateOptions = {}
     ) {
+        if (!options.raw) await session.send('正在生成日报，请稍候...')
         const message = await buildReportMessage(deviceName, date, options)
         await session.send(message)
     }
@@ -210,8 +221,9 @@ export function apply(ctx: Context, config: Config) {
             const rawReport = rawReports
                 .map((report) => `## ${report.date}\n\n${report.rawReport}`)
                 .join('\n\n---\n\n')
-            const analysis = await llm.analyze(device.name, dateRange, rawReport)
             const metrics = aggregateReportMetrics(rawReports, dateRange)
+            const topAppNames = metrics.topApps.slice(0, 3).map((app) => app.name)
+            const analysis = await llm.analyze(device.name, dateRange, rawReport, topAppNames)
             const buffer = await renderer.render({
                 deviceName: `${device.name} 最近 7 天`,
                 date: dateRange,
@@ -219,15 +231,6 @@ export function apply(ctx: Context, config: Config) {
                 analysis,
                 summaryTitle: '每周总结'
             })
-            const cachedReports = rawReports.filter((report) => report.cachedAt)
-
-            if (cachedReports.length) {
-                await session.send(h('message',
-                    h.image(buffer, 'image/png'),
-                    h.text('\n' + formatWeeklyCacheNote(cachedReports))
-                ))
-                return
-            }
 
             await session.send(h.image(buffer, 'image/png'))
         } catch (error) {
@@ -245,14 +248,14 @@ export function apply(ctx: Context, config: Config) {
 
         try {
             const report = await fetchTruncatedReport(device, date)
-            const cacheNote = formatCacheNote(report.cachedAt)
-            if (options.raw) return report.rawReport + cacheNote
+            if (options.raw) return report.rawReport
 
             const metrics = extractReportMetrics(report.rawReport, date)
-            const analysis = await llm.analyze(device.name, metrics.date || date, report.rawReport)
+            const topAppNames = metrics.topApps.slice(0, 3).map((app) => app.name)
+            const analysis = await llm.analyze(device.name, metrics.date || date, report.rawReport, topAppNames)
 
             if (options.text || config.outputMode === 'text') {
-                return formatTextReport(device.name, metrics.date || date, report.rawReport, analysis) + cacheNote
+                return formatTextReport(device.name, metrics.date || date, report.rawReport, analysis)
             }
 
             const buffer = await renderer.render({
@@ -263,13 +266,11 @@ export function apply(ctx: Context, config: Config) {
                 summaryTitle: '每日总结'
             })
 
-            if (config.outputMode === 'both' || report.cachedAt) {
-                const textReport = config.outputMode === 'both'
-                    ? '\n' + formatTextReport(device.name, metrics.date || date, report.rawReport, analysis)
-                    : ''
+            if (config.outputMode === 'both') {
+                const textReport = '\n' + formatTextReport(device.name, metrics.date || date, report.rawReport, analysis)
                 return h('message',
                     h.image(buffer, 'image/png'),
-                    h.text(textReport + cacheNote)
+                    h.text(textReport)
                 )
             }
 
@@ -284,7 +285,7 @@ export function apply(ctx: Context, config: Config) {
         if (!device) return formatDeviceNotFound(deviceName)
         try {
             const report = await fetchTruncatedReport(device, date)
-            return report.rawReport + formatCacheNote(report.cachedAt)
+            return report.rawReport
         } catch (error) {
             return formatError(`获取 ${device.name} ${date} 原始日报失败`, error)
         }
@@ -375,6 +376,13 @@ export function apply(ctx: Context, config: Config) {
     }
 }
 
+function resolveDeviceAndDate(deviceName?: string, dateArg?: string): { deviceName?: string; dateArg?: string } {
+    if (deviceName && isDateString(deviceName) && !dateArg) {
+        return { dateArg: deviceName }
+    }
+    return { deviceName, dateArg }
+}
+
 function resolveDate(dateArg?: string, useYesterday?: boolean): string | null {
     if (dateArg && isDateString(dateArg)) return dateArg
     if (dateArg && !isDateString(dateArg)) return null
@@ -409,23 +417,6 @@ function formatTextReport(
         `## ${summaryTitle}`,
         analysis.text || '暂无分析'
     ].join('\n')
-}
-
-function formatCacheNote(cachedAt?: string): string {
-    return cachedAt ? `\n\n> 当前使用缓存数据，缓存时间：${formatDateTime(cachedAt)}` : ''
-}
-
-function formatWeeklyCacheNote(reports: Array<{ date: string; cachedAt?: string }>): string {
-    const lines = reports
-        .filter((report) => report.cachedAt)
-        .map((report) => `- ${report.date}：${formatDateTime(report.cachedAt || '')}`)
-    return `当前周报包含缓存数据：\n${lines.join('\n')}`
-}
-
-function formatDateTime(value: string): string {
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    return date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function timeToCron(time: string): string | null {
