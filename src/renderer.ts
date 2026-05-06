@@ -89,24 +89,17 @@ export class ActivityRenderer {
         metrics: ReportMetrics,
         colorMap: Map<string, string>
     ): string {
-        const { hours, maxSeconds } = metrics.hourlyActivity
+        const { hours: hourlyApps, maxSeconds } = metrics.hourlyAppBreakdown
         if (maxSeconds === 0) {
             return '<div class="empty">暂无活跃数据</div>'
         }
 
-        const topApps = metrics.topApps.slice(0, 8)
-        const totalAppSeconds = topApps.reduce((sum, app) => sum + parseDurationSeconds(app.duration), 0)
-        const appRatios = topApps.map((app) => ({
-            name: app.name,
-            ratio: totalAppSeconds > 0 ? parseDurationSeconds(app.duration) / totalAppSeconds : 0,
-            color: colorMap.get(app.name) || '#ccc'
-        }))
-
-        const items = hours.map((seconds, i) => {
-            const percentage = maxSeconds > 0 ? (seconds / maxSeconds) * 100 : 0
+        const items = hourlyApps.map((entries, i) => {
+            const totalSeconds = entries.reduce((sum, e) => sum + e.seconds, 0)
+            const percentage = maxSeconds > 0 ? (totalSeconds / maxSeconds) * 100 : 0
             const label = String(i).padStart(2, '0')
 
-            if (seconds === 0) {
+            if (totalSeconds === 0) {
                 return `
                 <div class="chart-column" title="${label}:00">
                     <div class="bar-stack" style="height: 0px;"></div>
@@ -115,12 +108,16 @@ export class ActivityRenderer {
             }
 
             const height = `max(4px, ${percentage}%)`
-            const segments = appRatios
-                .filter((app) => app.ratio > 0)
-                .map((app) => `<div class="bar-segment" style="flex: ${app.ratio}; background-color: ${app.color};"></div>`)
+            const segments = entries
+                .sort((a, b) => b.seconds - a.seconds)
+                .map((entry) => {
+                    const color = colorMap.get(entry.app) || '#ccc'
+                    const flex = entry.seconds / totalSeconds
+                    return `<div class="bar-segment" style="flex: ${flex}; background-color: ${color};"></div>`
+                })
                 .join('')
 
-            const minutes = Math.round(seconds / 60)
+            const minutes = Math.round(totalSeconds / 60)
             return `
                 <div class="chart-column show-value" title="${label}:00 - ${minutes}分钟">
                     <div class="bar-value-top">${minutes > 0 ? minutes + 'm' : ''}</div>
@@ -194,9 +191,3 @@ function truncateSummary(text: string, maxLength: number): string {
     return text.slice(0, maxLength) + '...'
 }
 
-function parseDurationSeconds(text: string): number {
-    const h = parseInt(text.match(/(\d+)\s*(?:小时|时|h)/i)?.[1] ?? '0', 10)
-    const m = parseInt(text.match(/(\d+)\s*(?:分钟|分|m)/i)?.[1] ?? '0', 10)
-    const s = parseInt(text.match(/(\d+)\s*(?:秒|s)/i)?.[1] ?? '0', 10)
-    return h * 3600 + m * 60 + s
-}

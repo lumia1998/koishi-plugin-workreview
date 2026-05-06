@@ -19,6 +19,11 @@ export interface HourlyActivity {
     maxSeconds: number
 }
 
+export interface HourlyAppBreakdown {
+    hours: Array<Array<{ app: string; seconds: number }>>
+    maxSeconds: number
+}
+
 export interface ReportMetrics {
     date: string
     totalDuration: string
@@ -28,6 +33,7 @@ export interface ReportMetrics {
     topApps: Array<{ name: string; duration: string }>
     activeLines: string[]
     hourlyActivity: HourlyActivity
+    hourlyAppBreakdown: HourlyAppBreakdown
 }
 
 export class WorkReviewClient {
@@ -135,6 +141,7 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
         .filter((line) => /(高峰时段|活跃小时数|主要活跃区间)\s*[:：]/.test(line))
         .map((line) => line.replace(/^[-*\s]+/, ''))
     const hourlyActivity = extractHourlyActivity(rawReport)
+    const hourlyAppBreakdown = extractHourlyAppBreakdown(rawReport, topApps)
 
     return {
         date: date.trim(),
@@ -144,7 +151,8 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
         websiteCount,
         topApps,
         activeLines,
-        hourlyActivity
+        hourlyActivity,
+        hourlyAppBreakdown
     }
 }
 
@@ -159,6 +167,7 @@ export function aggregateReportMetrics(
     const websiteTotal = sumNumbers(metrics.map((item) => parseCount(item.websiteCount)))
     const appDurations = new Map<string, number>()
     const hourly = new Array<number>(24).fill(0)
+    const hourlyApps: Array<Map<string, number>> = Array.from({ length: 24 }, () => new Map())
 
     for (const metric of metrics) {
         for (const app of metric.topApps) {
@@ -166,6 +175,11 @@ export function aggregateReportMetrics(
         }
         metric.hourlyActivity.hours.forEach((seconds, index) => {
             hourly[index] += seconds
+        })
+        metric.hourlyAppBreakdown.hours.forEach((entries, index) => {
+            for (const entry of entries) {
+                hourlyApps[index].set(entry.app, (hourlyApps[index].get(entry.app) || 0) + entry.seconds)
+            }
         })
     }
 
@@ -189,6 +203,10 @@ export function aggregateReportMetrics(
         hourlyActivity: {
             hours: hourly,
             maxSeconds: Math.max(...hourly, 0)
+        },
+        hourlyAppBreakdown: {
+            hours: hourlyApps.map((m) => [...m].map(([app, seconds]) => ({ app, seconds }))),
+            maxSeconds: Math.max(...hourlyApps.map((m) => [...m.values()].reduce((s, v) => s + v, 0)), 0)
         }
     }
 }
@@ -271,6 +289,107 @@ function extractHourlyActivity(rawReport: string): HourlyActivity {
     }
 
     return { hours, maxSeconds: Math.max(...hours, 0) }
+}
+
+function extractHourlyAppBreakdown(
+    rawReport: string,
+    topApps: Array<{ name: string; duration: string }>
+): HourlyAppBreakdown {
+    const hours: Array<Array<{ app: string; seconds: number }>> = Array.from({ length: 24 }, () => [])
+
+    // Pattern 1: "09:15 - 09:45 AppName（30分）" or "09:15-09:45 AppName (30分钟)"
+    const entryPattern = /(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s+(.+?)\s*[（(]([^）)]+)[）)]/g
+    let match: RegExpExecArray | null
+    let found = false
+
+    while ((match = entryPattern.exec(rawReport)) !== null) {
+        const startHour = parseInt(match[1], 10)
+        const startMin = parseInt(match[2], 10)
+        const endHour = parseInt(match[3], 10)
+        const endMin = parseInt(match[4], 10)
+        const appName = match[5].trim()
+        const durationText = match[6]
+
+        if (startHour < 0 || startHour > 23) continue
+        if (/^\d+$/.test(appName) || /总|合计|小计/.test(appName)) continue
+
+        const seconds = parseDuration(durationText)
+        if (seconds <= 0) continue
+        found = true
+
+        if (startHour === endHour || (endHour === startHour + 1 && endMin === 0)) {
+            addToHour(hours, startHour, appName, seconds)
+        } else {
+            const totalMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin)
+            if (totalMinutes <= 0) {
+                addToHour(hours, startHour, appName, seconds)
+                continue
+            }
+            const firstHourMinutes = 60 - startMin
+            const lastHourMinutes = endMin
+            for (let h = startHour; h <= Math.min(endHour, 23); h++) {
+                let fraction: number
+                if (h === startHour) fraction = firstHourMinutes / totalMinutes
+                else if (h === endHour) fraction = lastHourMinutes / totalMinutes
+                else fraction = 60 / totalMinutes
+                addToHour(hours, h, appName, Math.round(seconds * fraction))
+            }
+        }
+    }
+
+    // Pattern 2: table format "| 09:15 - 09:45 | AppName | 30分 |"
+    if (!found) {
+        const tablePattern = /\|\s*(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/g
+        while ((match = tablePattern.exec(rawReport)) !== null) {
+            const startHour = parseInt(match[1], 10)
+            const appName = match[5].trim()
+            const durationText = match[6].trim()
+
+            if (startHour < 0 || startHour > 23) continue
+            if (/序号|时间|应用|时长/.test(appName)) continue
+
+            const seconds = parseDuration(durationText)
+            if (seconds <= 0) continue
+            found = true
+            addToHour(hours, startHour, appName, seconds)
+        }
+    }
+
+    // Fallback: distribute top apps proportionally into hours that have activity
+    if (!found && topApps.length > 0) {
+        const hourlyActivity = extractHourlyActivity(rawReport)
+        const totalAppSeconds = topApps.reduce((sum, app) => sum + parseDuration(app.duration), 0)
+        if (totalAppSeconds > 0) {
+            for (let h = 0; h < 24; h++) {
+                if (hourlyActivity.hours[h] <= 0) continue
+                for (const app of topApps) {
+                    const ratio = parseDuration(app.duration) / totalAppSeconds
+                    const seconds = Math.round(hourlyActivity.hours[h] * ratio)
+                    if (seconds > 0) {
+                        hours[h].push({ app: app.name, seconds })
+                    }
+                }
+            }
+        }
+    }
+
+    const maxSeconds = Math.max(
+        ...hours.map((entries) => entries.reduce((sum, e) => sum + e.seconds, 0)),
+        0
+    )
+    return { hours, maxSeconds }
+}
+
+function addToHour(
+    hours: Array<Array<{ app: string; seconds: number }>>,
+    hour: number,
+    app: string,
+    seconds: number
+): void {
+    if (hour < 0 || hour > 23 || seconds <= 0) return
+    const existing = hours[hour].find((e) => e.app === app)
+    if (existing) existing.seconds += seconds
+    else hours[hour].push({ app, seconds })
 }
 
 function looksLikeDuration(text: string): boolean {
