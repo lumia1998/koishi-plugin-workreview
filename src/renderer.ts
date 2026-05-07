@@ -49,7 +49,7 @@ export class ActivityRenderer {
             appLegend: this.generateLegend(topApps, colorMap),
             topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
             summaryTitle: escapeHtml(data.summaryTitle),
-            summary: escapeHtml(truncateSummary(data.analysis.text || '暂无分析', 200))
+            summary: escapeHtml(data.analysis.text || '暂无分析')
         })
 
         const page = await this.ctx.puppeteer.page()
@@ -193,8 +193,4 @@ function buildFallbackComment(appName: string, rank: number): string {
     return `第${rank}名选手，今天存在感不低。`
 }
 
-function truncateSummary(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text
-    return text.slice(0, maxLength) + '...'
-}
 
