@@ -11,7 +11,6 @@ import { ActivityRenderer } from './renderer.js'
 import {
     aggregateReportMetrics,
     extractReportMetrics,
-    truncateRawReport,
     WorkReviewClient
 } from './workreview.js'
 import { isDateString, previousDates, today, yesterday } from './utils.js'
@@ -308,11 +307,11 @@ export function apply(ctx: Context, config: Config) {
     async function fetchLiveTruncatedReport(device: DeviceConfig, date: string): Promise<string> {
         try {
             const report = await client.getReport(device, date)
-            return truncateRawReport(report.content || '')
+            return report.content || ''
         } catch (error) {
             if (!config.autoGenerateMissingReport) throw error
             const report = await client.generateReport(device, date)
-            return truncateRawReport(report.content || '')
+            return report.content || ''
         }
     }
 

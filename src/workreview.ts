@@ -24,6 +24,14 @@ export interface HourlyAppBreakdown {
     maxSeconds: number
 }
 
+export interface TimelineEntry {
+    startTime: string
+    endTime: string
+    duration: string
+    app: string
+    window: string
+}
+
 export interface ReportMetrics {
     date: string
     totalDuration: string
@@ -61,7 +69,7 @@ export class WorkReviewClient {
     ): Promise<ReportResponse> {
         return this.request(device, '/v1/reports/generate', {
             method: 'POST',
-            body: JSON.stringify({ date }),
+            body: JSON.stringify({ date, force: true }),
             headers: { 'Content-Type': 'application/json' }
         }) as Promise<ReportResponse>
     }
@@ -140,8 +148,18 @@ export function extractReportMetrics(rawReport: string, fallbackDate: string): R
         .map((line) => line.trim())
         .filter((line) => /(高峰时段|活跃小时数|主要活跃区间)\s*[:：]/.test(line))
         .map((line) => line.replace(/^[-*\s]+/, ''))
-    const hourlyActivity = extractHourlyActivity(rawReport)
-    const hourlyAppBreakdown = extractHourlyAppBreakdown(rawReport)
+
+    // 优先从活动时间线重建小时数据
+    const timeline = extractActivityTimeline(rawReport)
+    const timelineBasedData = buildHourlyDataFromTimeline(timeline)
+
+    // 如果时间线数据有效，使用它；否则回退到旧的解析方式
+    const hourlyActivity = timelineBasedData.maxSeconds > 0
+        ? timelineBasedData.hourlyActivity
+        : extractHourlyActivity(rawReport)
+    const hourlyAppBreakdown = timelineBasedData.maxSeconds > 0
+        ? timelineBasedData.hourlyAppBreakdown
+        : extractHourlyAppBreakdown(rawReport)
 
     return {
         date: date.trim(),
@@ -384,6 +402,118 @@ function parseDuration(text: string): number {
     const m = parseInt(text.match(/(\d+)\s*(?:分钟|分|m)/i)?.[1] ?? '0', 10)
     const s = parseInt(text.match(/(\d+)\s*(?:秒|s)/i)?.[1] ?? '0', 10)
     return h * 3600 + m * 60 + s
+}
+
+/**
+ * 从活动时间线 <details> 表格中提取时间段数据
+ * 格式示例：| 14:30-15:00 | 30分0秒 | Chrome | claude.ai |
+ */
+function extractActivityTimeline(rawReport: string): TimelineEntry[] {
+    const timeline: TimelineEntry[] = []
+
+    // 查找 <details> 块
+    const detailsMatch = rawReport.match(/<details>[\s\S]*?<\/details>/i)
+    if (!detailsMatch) return timeline
+
+    const detailsContent = detailsMatch[0]
+
+    // 解析表格行：| 时间段 | 时长 | 应用 | 窗口 |
+    const tableRowPattern = /\|\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/g
+    let match: RegExpExecArray | null
+
+    while ((match = tableRowPattern.exec(detailsContent)) !== null) {
+        const startTime = match[1].trim()
+        const endTime = match[2].trim()
+        const duration = match[3].trim()
+        const app = match[4].trim()
+        const window = match[5].trim()
+
+        // 跳过表头
+        if (/时间段|时长|应用|窗口/i.test(app) || /^[-:]+$/.test(app)) continue
+
+        timeline.push({
+            startTime,
+            endTime,
+            duration,
+            app,
+            window
+        })
+    }
+
+    return timeline
+}
+
+/**
+ * 从时间线数据重建 24 小时活跃数据
+ * 将每个时间段按小时拆分，计算每小时的活跃分钟数和应用分布
+ */
+function buildHourlyDataFromTimeline(timeline: TimelineEntry[]): {
+    hourlyActivity: HourlyActivity
+    hourlyAppBreakdown: HourlyAppBreakdown
+    maxSeconds: number
+} {
+    const hourlySeconds = new Array<number>(24).fill(0)
+    const hourlyApps: Array<Map<string, number>> = Array.from({ length: 24 }, () => new Map())
+
+    for (const entry of timeline) {
+        const [startHour, startMin] = entry.startTime.split(':').map(Number)
+        const [endHour, endMin] = entry.endTime.split(':').map(Number)
+        const totalSeconds = parseDuration(entry.duration)
+
+        if (startHour < 0 || startHour > 23 || totalSeconds <= 0) continue
+
+        // 单小时内的活动
+        if (startHour === endHour || (endHour === startHour + 1 && endMin === 0)) {
+            hourlySeconds[startHour] += totalSeconds
+            const existing = hourlyApps[startHour].get(entry.app) || 0
+            hourlyApps[startHour].set(entry.app, existing + totalSeconds)
+        } else {
+            // 跨小时活动，按比例分配
+            const totalMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin)
+            if (totalMinutes <= 0) {
+                // 异常情况，全部算在起始小时
+                hourlySeconds[startHour] += totalSeconds
+                const existing = hourlyApps[startHour].get(entry.app) || 0
+                hourlyApps[startHour].set(entry.app, existing + totalSeconds)
+                continue
+            }
+
+            const firstHourMinutes = 60 - startMin
+            const lastHourMinutes = endMin
+
+            for (let h = startHour; h <= Math.min(endHour, 23); h++) {
+                let fraction: number
+                if (h === startHour) {
+                    fraction = firstHourMinutes / totalMinutes
+                } else if (h === endHour) {
+                    fraction = lastHourMinutes / totalMinutes
+                } else {
+                    fraction = 60 / totalMinutes
+                }
+
+                const seconds = Math.round(totalSeconds * fraction)
+                hourlySeconds[h] += seconds
+                const existing = hourlyApps[h].get(entry.app) || 0
+                hourlyApps[h].set(entry.app, existing + seconds)
+            }
+        }
+    }
+
+    const maxSeconds = Math.max(...hourlySeconds, 0)
+
+    return {
+        hourlyActivity: {
+            hours: hourlySeconds,
+            maxSeconds
+        },
+        hourlyAppBreakdown: {
+            hours: hourlyApps.map((appMap) =>
+                [...appMap.entries()].map(([app, seconds]) => ({ app, seconds }))
+            ),
+            maxSeconds
+        },
+        maxSeconds
+    }
 }
 
 function formatDuration(seconds: number): string {
