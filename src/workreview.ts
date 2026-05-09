@@ -44,6 +44,7 @@ export interface ReportMetrics {
     topApps: Array<{ name: string; duration: string }>
     hourlyActivity: HourlyActivity
     hourlyAppBreakdown: HourlyAppBreakdown
+    categoryBreakdown: Array<{ category: string; seconds: number }>
 }
 
 export class WorkReviewClient {
@@ -219,7 +220,8 @@ export function extractReportMetrics(
             appCount: 0,
             topApps: [],
             hourlyActivity: { hours: Array(24).fill(0), maxSeconds: 0 },
-            hourlyAppBreakdown: { hours: Array(24).fill(0).map(() => []), maxSeconds: 0 }
+            hourlyAppBreakdown: { hours: Array(24).fill(0).map(() => []), maxSeconds: 0 },
+            categoryBreakdown: []
         }
     }
 
@@ -246,6 +248,17 @@ export function extractReportMetrics(
             duration: formatDuration(seconds)
         }))
 
+    // 分类时长统计
+    const categoryDurations = new Map<string, number>()
+    for (const activity of activities) {
+        const category = activity.semantic_category || '其他'
+        const existing = categoryDurations.get(category) || 0
+        categoryDurations.set(category, existing + activity.duration)
+    }
+    const categoryBreakdown = [...categoryDurations.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([category, seconds]) => ({ category, seconds }))
+
     return {
         date,
         totalDuration,
@@ -253,7 +266,8 @@ export function extractReportMetrics(
         appCount: appDurations.size,
         topApps,
         hourlyActivity: hourlyData.hourlyActivity,
-        hourlyAppBreakdown: hourlyData.hourlyAppBreakdown
+        hourlyAppBreakdown: hourlyData.hourlyAppBreakdown,
+        categoryBreakdown
     }
 }
 
@@ -264,6 +278,7 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
     }
 
     const allApps = new Map<string, number>()
+    const allCategories = new Map<string, number>()
     let totalSeconds = 0
     let totalScreenshots = 0
     const allAppNames = new Set<string>()
@@ -297,6 +312,12 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
                 allApps.set(app.name, existing + seconds)
             }
             allAppNames.add(app.name)
+        }
+
+        // 聚合分类时长
+        for (const { category, seconds } of metric.categoryBreakdown) {
+            const existing = allCategories.get(category) || 0
+            allCategories.set(category, existing + seconds)
         }
     }
 
@@ -344,6 +365,9 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
                     .sort((a, b) => b.seconds - a.seconds)
             ),
             maxSeconds
-        }
+        },
+        categoryBreakdown: [...allCategories.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([category, seconds]) => ({ category, seconds }))
     }
 }

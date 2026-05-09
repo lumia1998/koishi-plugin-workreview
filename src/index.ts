@@ -229,7 +229,7 @@ export function apply(ctx: Context, config: Config) {
 
             const metrics = extractReportMetrics(activities, date)
             const activitySummary = buildActivitySummary(activities, metrics)
-            const topAppNames = metrics.topApps.slice(0, 3).map((app) => app.name)
+            const topAppNames = metrics.topApps.slice(0, 5).map((app) => app.name)
 
             const analysis = await llm.analyze(deviceName, date, activitySummary, topAppNames)
 
@@ -281,7 +281,7 @@ export function apply(ctx: Context, config: Config) {
             }
 
             const weeklyMetrics = aggregateReportMetrics(allMetrics)
-            const topAppNames = weeklyMetrics.topApps.slice(0, 3).map((app) => app.name)
+            const topAppNames = weeklyMetrics.topApps.slice(0, 5).map((app) => app.name)
 
             // 构建周报摘要
             const weeklySummary = buildWeeklySummary(allMetrics)

@@ -193,9 +193,10 @@ body {
 .chart-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 10px;
-    justify-content: flex-end;
-    max-width: 280px;
+    gap: 6px 12px;
+    justify-content: center;
+    margin-top: 10px;
+    padding-top: 8px;
 }
 
 .legend-item {
@@ -276,11 +277,97 @@ body {
     white-space: nowrap;
 }
 
-/* ==================== Top 3 应用锐评 ==================== */
+/* ==================== 活动分类饼图 ==================== */
+.category-section {
+    padding: 16px;
+    background: #fff;
+    border: 1.5px solid rgba(93, 64, 55, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 4px 4px 0 var(--color-green);
+    margin-bottom: 24px;
+}
+
+.category-section .chart-title {
+    font-family: var(--font-title);
+    font-size: 1.1rem;
+    color: var(--ink-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.category-pie-container {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.pie-chart {
+    flex-shrink: 0;
+    width: 120px;
+    height: 120px;
+}
+
+.pie-svg {
+    width: 100%;
+    height: 100%;
+}
+
+.category-legend {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.category-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+}
+
+.category-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.category-name {
+    flex: 1;
+    color: var(--ink-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.category-percent {
+    color: var(--ink-primary);
+    font-weight: 500;
+    font-family: var(--font-hand);
+    font-size: 0.85rem;
+    min-width: 30px;
+    text-align: right;
+}
+
+.category-duration {
+    color: var(--ink-secondary);
+    font-family: var(--font-hand);
+    font-size: 0.8rem;
+    min-width: 36px;
+    text-align: right;
+}
+
+/* ==================== 应用时长 Top 5 ==================== */
 .top-apps-section {
-    margin-top: 16px;
-    padding-top: 14px;
-    border-top: 1.5px dashed rgba(93, 64, 55, 0.2);
+    padding: 16px;
+    background: #fff;
+    border: 1.5px solid rgba(93, 64, 55, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 4px 4px 0 var(--color-pink);
+    margin-bottom: 24px;
 }
 
 .top-apps-title {

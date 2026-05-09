@@ -14,6 +14,17 @@ const APP_COLORS = [
     '#ffa726', '#26c6da', '#ec407a', '#8d6e63'
 ]
 
+const CATEGORY_COLORS: Record<string, string> = {
+    '通讯协作': '#42a5f5',
+    '办公软件': '#66bb6a',
+    '开发工具': '#ab47bc',
+    '浏览器': '#ff7043',
+    '设计工具': '#26c6da',
+    '娱乐摸鱼': '#ec407a',
+    '系统工具': '#8d6e63',
+    '其他': '#bdbdbd'
+}
+
 export interface RenderData {
     deviceName: string
     date: string
@@ -47,6 +58,7 @@ export class ActivityRenderer {
             totalDuration: escapeHtml(data.metrics.totalDuration),
             activityChart: this.generateCombinedChart(data.metrics, colorMap),
             appLegend: this.generateLegend(topApps, colorMap),
+            categoryPieChart: this.generateCategoryPieChart(data.metrics.categoryBreakdown),
             topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
             summaryTitle: escapeHtml(data.summaryTitle),
             summary: this.formatSummaryText(data.analysis.text || '暂无分析')
@@ -153,10 +165,10 @@ export class ActivityRenderer {
         topApps: ReportMetrics['topApps'],
         appComments: AppComment[]
     ): string {
-        const top3 = topApps.slice(0, 3)
-        if (!top3.length) return '<div class="empty">暂无应用数据</div>'
+        const top5 = topApps.slice(0, 5)
+        if (!top5.length) return '<div class="empty">暂无应用数据</div>'
 
-        return top3
+        return top5
             .map((app, index) => {
                 const comment = appComments.find(
                     (c) => normalizeAppName(c.name).includes(normalizeAppName(app.name)) || normalizeAppName(app.name).includes(normalizeAppName(c.name))
@@ -173,6 +185,56 @@ export class ActivityRenderer {
                 </div>`
             })
             .join('')
+    }
+
+    private generateCategoryPieChart(
+        categoryBreakdown: Array<{ category: string; seconds: number }>
+    ): string {
+        if (!categoryBreakdown.length) return '<div class="empty">暂无分类数据</div>'
+
+        const totalSeconds = categoryBreakdown.reduce((sum, c) => sum + c.seconds, 0)
+        if (totalSeconds === 0) return '<div class="empty">暂无分类数据</div>'
+
+        const radius = 60
+        const cx = 70
+        const cy = 70
+        let startAngle = -Math.PI / 2
+
+        const paths = categoryBreakdown.map((item) => {
+            const fraction = item.seconds / totalSeconds
+            if (fraction < 0.005) return ''
+            const endAngle = startAngle + fraction * 2 * Math.PI
+            const largeArc = fraction > 0.5 ? 1 : 0
+            const x1 = cx + radius * Math.cos(startAngle)
+            const y1 = cy + radius * Math.sin(startAngle)
+            const x2 = cx + radius * Math.cos(endAngle)
+            const y2 = cy + radius * Math.sin(endAngle)
+            const color = CATEGORY_COLORS[item.category] || CATEGORY_COLORS['其他']
+            const path = `<path d="M${cx},${cy} L${x1},${y1} A${radius},${radius} 0 ${largeArc},1 ${x2},${y2} Z" fill="${color}"/>`
+            startAngle = endAngle
+            return path
+        }).join('')
+
+        const svg = `<svg viewBox="0 0 140 140" class="pie-svg">${paths}</svg>`
+
+        const legendItems = categoryBreakdown
+            .filter((item) => item.seconds / totalSeconds >= 0.005)
+            .map((item) => {
+                const color = CATEGORY_COLORS[item.category] || CATEGORY_COLORS['其他']
+                const percent = Math.round((item.seconds / totalSeconds) * 100)
+                const minutes = Math.round(item.seconds / 60)
+                return `<div class="category-legend-item">
+                    <span class="category-dot" style="background:${color};"></span>
+                    <span class="category-name">${escapeHtml(item.category)}</span>
+                    <span class="category-percent">${percent}%</span>
+                    <span class="category-duration">${minutes}m</span>
+                </div>`
+            }).join('')
+
+        return `<div class="category-pie-container">
+            <div class="pie-chart">${svg}</div>
+            <div class="category-legend">${legendItems}</div>
+        </div>`
     }
 
     private formatSummaryText(text: string): string {
