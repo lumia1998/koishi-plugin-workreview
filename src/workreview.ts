@@ -248,10 +248,10 @@ export function extractReportMetrics(
             duration: formatDuration(seconds)
         }))
 
-    // 分类时长统计
+    // 分类时长统计（使用 category 字段，映射为中文）
     const categoryDurations = new Map<string, number>()
     for (const activity of activities) {
-        const category = activity.semantic_category || '其他'
+        const category = mapCategoryName(activity.category)
         const existing = categoryDurations.get(category) || 0
         categoryDurations.set(category, existing + activity.duration)
     }
@@ -370,4 +370,23 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
             .sort((a, b) => b[1] - a[1])
             .map(([category, seconds]) => ({ category, seconds }))
     }
+}
+
+const CATEGORY_NAME_MAP: Record<string, string> = {
+    entertainment: '娱乐摸鱼',
+    communication: '通讯协作',
+    browser: '浏览器',
+    development: '开发工具',
+    office: '办公软件',
+    design: '设计工具',
+    system: '系统工具',
+    other: '其他'
+}
+
+function mapCategoryName(raw: string): string {
+    if (!raw) return '其他'
+    const lower = raw.toLowerCase()
+    if (CATEGORY_NAME_MAP[lower]) return CATEGORY_NAME_MAP[lower]
+    if (lower.startsWith('cat-')) return '其他'
+    return raw
 }

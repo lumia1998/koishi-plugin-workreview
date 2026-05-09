@@ -15,14 +15,20 @@ const APP_COLORS = [
 ]
 
 const CATEGORY_COLORS: Record<string, string> = {
-    '通讯协作': '#42a5f5',
-    '办公软件': '#66bb6a',
-    '开发工具': '#ab47bc',
-    '浏览器': '#ff7043',
-    '设计工具': '#26c6da',
     '娱乐摸鱼': '#ec407a',
+    '通讯协作': '#42a5f5',
+    '浏览器': '#ff7043',
+    '开发工具': '#ab47bc',
+    '办公软件': '#66bb6a',
+    '设计工具': '#26c6da',
     '系统工具': '#8d6e63',
     '其他': '#bdbdbd'
+}
+
+const CATEGORY_FALLBACK_COLORS = ['#ffa726', '#78909c', '#7e57c2', '#29b6f6']
+
+function getCategoryColor(category: string, index: number): string {
+    return CATEGORY_COLORS[category] || CATEGORY_FALLBACK_COLORS[index % CATEGORY_FALLBACK_COLORS.length]
 }
 
 export interface RenderData {
@@ -200,7 +206,7 @@ export class ActivityRenderer {
         const cy = 70
         let startAngle = -Math.PI / 2
 
-        const paths = categoryBreakdown.map((item) => {
+        const paths = categoryBreakdown.map((item, index) => {
             const fraction = item.seconds / totalSeconds
             if (fraction < 0.005) return ''
             const endAngle = startAngle + fraction * 2 * Math.PI
@@ -209,7 +215,7 @@ export class ActivityRenderer {
             const y1 = cy + radius * Math.sin(startAngle)
             const x2 = cx + radius * Math.cos(endAngle)
             const y2 = cy + radius * Math.sin(endAngle)
-            const color = CATEGORY_COLORS[item.category] || CATEGORY_COLORS['其他']
+            const color = getCategoryColor(item.category, index)
             const path = `<path d="M${cx},${cy} L${x1},${y1} A${radius},${radius} 0 ${largeArc},1 ${x2},${y2} Z" fill="${color}"/>`
             startAngle = endAngle
             return path
@@ -219,8 +225,8 @@ export class ActivityRenderer {
 
         const legendItems = categoryBreakdown
             .filter((item) => item.seconds / totalSeconds >= 0.005)
-            .map((item) => {
-                const color = CATEGORY_COLORS[item.category] || CATEGORY_COLORS['其他']
+            .map((item, index) => {
+                const color = getCategoryColor(item.category, index)
                 const percent = Math.round((item.seconds / totalSeconds) * 100)
                 const minutes = Math.round(item.seconds / 60)
                 return `<div class="category-legend-item">
