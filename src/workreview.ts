@@ -1,17 +1,29 @@
 import type { DeviceConfig } from './config.js'
 
-export interface ReportResponse {
-    date: string
-    locale?: string
-    content: string
-    ai_mode?: string
-    model_name?: string | null
-    fallback_reason?: string
-    created_at?: number
+// API 原始响应
+export interface TimelineActivity {
+    id: number
+    timestamp: number
+    app_name: string
+    window_title: string
+    screenshot_path: string
+    ocr_text: string | null
+    category: string
+    duration: number
+    browser_url: string | null
+    executable_path: string
+    semantic_category: string
+    semantic_confidence: number
 }
 
-export interface ReportsResponse {
-    dates: string[]
+// 处理后的时间线条目
+export interface TimelineEntry {
+    startTime: string
+    endTime: string
+    duration: number
+    app: string
+    window: string
+    category: string
 }
 
 export interface HourlyActivity {
@@ -24,22 +36,12 @@ export interface HourlyAppBreakdown {
     maxSeconds: number
 }
 
-export interface TimelineEntry {
-    startTime: string
-    endTime: string
-    duration: string
-    app: string
-    window: string
-}
-
 export interface ReportMetrics {
     date: string
     totalDuration: string
-    screenshotCount: string
-    appCount: string
-    websiteCount: string
+    screenshotCount: number
+    appCount: number
     topApps: Array<{ name: string; duration: string }>
-    activeLines: string[]
     hourlyActivity: HourlyActivity
     hourlyAppBreakdown: HourlyAppBreakdown
 }
@@ -47,63 +49,32 @@ export interface ReportMetrics {
 export class WorkReviewClient {
     constructor(private timeout: number) {}
 
-    async health(device: DeviceConfig): Promise<unknown> {
-        return this.get(device, '/health', false)
+    async getTimeline(device: DeviceConfig, date: string): Promise<TimelineActivity[]> {
+        const path = `/v1/timeline/${encodeURIComponent(date)}`
+        return this.get(device, path) as Promise<TimelineActivity[]>
     }
 
-    async deviceInfo(device: DeviceConfig): Promise<unknown> {
-        return this.get(device, '/v1/device')
-    }
-
-    async listReports(device: DeviceConfig): Promise<ReportsResponse> {
-        return this.get(device, '/v1/reports') as Promise<ReportsResponse>
-    }
-
-    async getReport(device: DeviceConfig, date: string): Promise<ReportResponse> {
-        return this.get(device, `/v1/reports/${encodeURIComponent(date)}`) as Promise<ReportResponse>
-    }
-
-    async generateReport(
-        device: DeviceConfig,
-        date: string
-    ): Promise<ReportResponse> {
-        return this.request(device, '/v1/reports/generate', {
-            method: 'POST',
-            body: JSON.stringify({ date, force: true }),
-            headers: { 'Content-Type': 'application/json' }
-        }) as Promise<ReportResponse>
-    }
-
-    private async get(
-        device: DeviceConfig,
-        path: string,
-        withToken = true
-    ): Promise<unknown> {
-        return this.request(device, path, { method: 'GET' }, withToken)
+    private async get(device: DeviceConfig, path: string): Promise<unknown> {
+        return this.request(device, path, { method: 'GET' })
     }
 
     private async request(
         device: DeviceConfig,
         path: string,
-        init: RequestInit,
-        withToken = true
+        init: RequestInit
     ): Promise<unknown> {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.timeout)
 
         try {
-            const headers: Record<string, string> = {
-                Accept: 'application/json',
-                ...(init.headers as Record<string, string> || {})
-            }
-            if (withToken && device.token) {
-                headers['Authorization'] = `Bearer ${device.token}`
-            }
-
-            const response = await fetch(this.buildUrl(device, path), {
+            const url = this.buildUrl(device, path)
+            const response = await fetch(url, {
                 ...init,
                 signal: controller.signal,
-                headers
+                headers: {
+                    Accept: 'application/json',
+                    ...(init.headers as Record<string, string> || {})
+                }
             })
 
             const text = await response.text()
@@ -118,404 +89,31 @@ export class WorkReviewClient {
         }
     }
 
-    private buildUrl(
-        device: DeviceConfig,
-        path: string
-    ): string {
+    private buildUrl(device: DeviceConfig, path: string): string {
         const protocol = device.protocol || 'http'
         const host = device.host.replace(/^https?:\/\//, '').replace(/\/+$/, '')
         const hasPort = /:\d+$/.test(host)
         const base = `${protocol}://${host}${hasPort ? '' : `:${device.port || 47831}`}`
         const url = new URL(path, base)
+
+        // 使用 query param 方式传递 token
+        if (device.token) {
+            url.searchParams.set('token', device.token)
+        }
+
         return url.toString()
     }
 }
 
-export function truncateRawReport(content: string): string {
-    const marker = content.search(/\n#{1,6}\s*(?:[一二三四五六七八九十\d]+[、.．]\s*)?AI\s*分析/i)
-    return (marker >= 0 ? content.slice(0, marker) : content).trim()
+// 将 Unix 时间戳转换为北京时间字符串 HH:MM
+function formatBeijingTime(timestamp: number): string {
+    const date = new Date((timestamp + 8 * 3600) * 1000)
+    const hours = String(date.getUTCHours()).padStart(2, '0')
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0')
+    return `${hours}:${minutes}`
 }
 
-export function extractReportMetrics(rawReport: string, fallbackDate: string): ReportMetrics {
-    const date = extractDate(rawReport) || fallbackDate
-    const totalDuration = findMetric(rawReport, '总工作时长') || '未知'
-    const screenshotCount = findMetric(rawReport, '截图数量') || '未知'
-    const appCount = findMetric(rawReport, '使用应用数') || findMetric(rawReport, '应用数量') || '未知'
-    const websiteCount = findMetric(rawReport, '访问网站数') || findMetric(rawReport, '网站数量') || '未知'
-    const topApps = extractTopApps(rawReport)
-    const activeLines = rawReport
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => /(高峰时段|活跃小时数|主要活跃区间)\s*[:：]/.test(line))
-        .map((line) => line.replace(/^[-*\s]+/, ''))
-
-    // 优先从活动时间线重建小时数据
-    const timeline = extractActivityTimeline(rawReport)
-    const timelineBasedData = buildHourlyDataFromTimeline(timeline)
-
-    // 如果时间线数据有效，使用它；否则回退到旧的解析方式
-    const hourlyActivity = timelineBasedData.maxSeconds > 0
-        ? timelineBasedData.hourlyActivity
-        : extractHourlyActivity(rawReport)
-    const hourlyAppBreakdown = timelineBasedData.maxSeconds > 0
-        ? timelineBasedData.hourlyAppBreakdown
-        : extractHourlyAppBreakdown(rawReport)
-
-    return {
-        date: date.trim(),
-        totalDuration,
-        screenshotCount,
-        appCount,
-        websiteCount,
-        topApps,
-        activeLines,
-        hourlyActivity,
-        hourlyAppBreakdown
-    }
-}
-
-export function aggregateReportMetrics(
-    reports: Array<{ date: string; rawReport: string }>,
-    dateRange: string
-): ReportMetrics {
-    const metrics = reports.map((report) => extractReportMetrics(report.rawReport, report.date))
-    const totalSeconds = sumNumbers(metrics.map((item) => parseDuration(item.totalDuration)))
-    const screenshotTotal = sumNumbers(metrics.map((item) => parseCount(item.screenshotCount)))
-    const appTotal = sumNumbers(metrics.map((item) => parseCount(item.appCount)))
-    const websiteTotal = sumNumbers(metrics.map((item) => parseCount(item.websiteCount)))
-    const appDurations = new Map<string, number>()
-    const hourly = new Array<number>(24).fill(0)
-    const hourlyApps: Array<Map<string, number>> = Array.from({ length: 24 }, () => new Map())
-
-    for (const metric of metrics) {
-        for (const app of metric.topApps) {
-            appDurations.set(app.name, (appDurations.get(app.name) || 0) + parseDuration(app.duration))
-        }
-        metric.hourlyActivity.hours.forEach((seconds, index) => {
-            hourly[index] += seconds
-        })
-        metric.hourlyAppBreakdown.hours.forEach((entries, index) => {
-            for (const entry of entries) {
-                hourlyApps[index].set(entry.app, (hourlyApps[index].get(entry.app) || 0) + entry.seconds)
-            }
-        })
-    }
-
-    const topApps = [...appDurations]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 8)
-        .map(([name, seconds]) => ({ name, duration: formatDuration(seconds) }))
-
-    const activeLines = metrics
-        .flatMap((metric) => metric.activeLines.map((line) => `${metric.date}: ${line}`))
-        .slice(0, 12)
-
-    return {
-        date: dateRange,
-        totalDuration: totalSeconds ? formatDuration(totalSeconds) : '未知',
-        screenshotCount: screenshotTotal ? `${screenshotTotal} 张` : '未知',
-        appCount: appTotal ? `累计 ${appTotal} 次` : '未知',
-        websiteCount: websiteTotal ? `累计 ${websiteTotal} 次` : '未知',
-        topApps,
-        activeLines,
-        hourlyActivity: {
-            hours: hourly,
-            maxSeconds: Math.max(...hourly, 0)
-        },
-        hourlyAppBreakdown: {
-            hours: hourlyApps.map((m) => [...m].map(([app, seconds]) => ({ app, seconds }))),
-            maxSeconds: Math.max(...hourlyApps.map((m) => [...m.values()].reduce((s, v) => s + v, 0)), 0)
-        }
-    }
-}
-
-
-function extractDate(rawReport: string): string | null {
-    return (
-        matchFirst(rawReport, /\*\*\s*日期\s*[:：]\s*([^*\n]+)\s*\*\*/) ||
-        matchFirst(rawReport, /(?:^|\n)\s*日期\s*[:：]\s*([^\n]+)/) ||
-        matchFirst(rawReport, /(\d{4}-\d{2}-\d{2})/)
-    )
-}
-
-function matchFirst(text: string, pattern: RegExp): string | null {
-    return text.match(pattern)?.[1]?.trim() ?? null
-}
-
-function findMetric(rawReport: string, name: string): string | null {
-    const escaped = escapeRegExp(name)
-    return (
-        matchFirst(rawReport, new RegExp(`\\|\\s*${escaped}\\s*\\|\\s*([^|\\n]+)\\|`)) ||
-        matchFirst(rawReport, new RegExp(`(?:^|\\n)\\s*[-*]?\\s*${escaped}\\s*[:：]\\s*([^\\n]+)`)) ||
-        matchFirst(rawReport, new RegExp(`\\*\\*\\s*${escaped}\\s*[:：]\\s*([^*\\n]+)\\s*\\*\\*`))
-    )
-}
-
-function extractTopApps(rawReport: string): Array<{ name: string; duration: string }> {
-    const section = findSection(rawReport, /(应用|App).*(明细|排行|使用)/i)
-    if (!section) return []
-
-    const apps = section
-        .split('\n')
-        .map((line) => parseAppTableLine(line) || parseAppListLine(line))
-        .filter((app): app is { name: string; duration: string } => !!app)
-
-    return apps.slice(0, 8)
-}
-
-function findSection(rawReport: string, titlePattern: RegExp): string | null {
-    const sections = rawReport.split(/\n(?=#{1,6}\s+)/)
-    return sections.find((section) => titlePattern.test(section.split('\n')[0] || '')) ?? null
-}
-
-function parseAppTableLine(line: string): { name: string; duration: string } | null {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null
-    const cells = trimmed
-        .slice(1, -1)
-        .split('|')
-        .map((cell) => cell.trim())
-    if (cells.some((cell) => /^:?-{2,}:?$/.test(cell))) return null
-    if (/序号|应用|时长|名称/.test(cells.join(' '))) return null
-
-    if (/^\d+$/.test(cells[0] || '') && cells.length >= 3) {
-        return cells[1] && cells[2] ? { name: cells[1], duration: cells[2] } : null
-    }
-    if (cells.length >= 2 && looksLikeDuration(cells.at(-1) || '')) {
-        const name = cells.slice(0, -1).join(' ').trim()
-        return name ? { name, duration: cells.at(-1) || '' } : null
-    }
-    return null
-}
-
-function parseAppListLine(line: string): { name: string; duration: string } | null {
-    const match = line.match(/^\s*[-*]?\s*(?:\d+[.)、]\s*)?(.+?)\s*[:：|]\s*([^|\n]+)$/)
-    if (!match || !looksLikeDuration(match[2])) return null
-    return { name: match[1].trim(), duration: match[2].trim() }
-}
-
-function extractHourlyActivity(rawReport: string): HourlyActivity {
-    const hours = new Array<number>(24).fill(0)
-    const bucketPattern = /(\d{1,2}):\d{2}\s*[-–]\s*\d{1,2}:\d{2}\s*[（(]([^）)]+)[）)]/g
-    let match: RegExpExecArray | null
-
-    while ((match = bucketPattern.exec(rawReport)) !== null) {
-        const hour = parseInt(match[1], 10)
-        if (hour >= 0 && hour < 24) {
-            hours[hour] += parseDuration(match[2])
-        }
-    }
-
-    return { hours, maxSeconds: Math.max(...hours, 0) }
-}
-
-function extractHourlyAppBreakdown(rawReport: string): HourlyAppBreakdown {
-    const hours: Array<Array<{ app: string; seconds: number }>> = Array.from({ length: 24 }, () => [])
-
-    // Pattern 1: "09:15 - 09:45 AppName（30分）" or "09:15-09:45 AppName (30分钟)"
-    const entryPattern = /(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s+(.+?)\s*[（(]([^）)]+)[）)]/g
-    let match: RegExpExecArray | null
-    let found = false
-
-    while ((match = entryPattern.exec(rawReport)) !== null) {
-        const startHour = parseInt(match[1], 10)
-        const startMin = parseInt(match[2], 10)
-        const endHour = parseInt(match[3], 10)
-        const endMin = parseInt(match[4], 10)
-        const appName = match[5].trim()
-        const durationText = match[6]
-
-        if (startHour < 0 || startHour > 23) continue
-        if (/^\d+$/.test(appName) || /总|合计|小计/.test(appName)) continue
-
-        const seconds = parseDuration(durationText)
-        if (seconds <= 0) continue
-        found = true
-
-        if (startHour === endHour || (endHour === startHour + 1 && endMin === 0)) {
-            addToHour(hours, startHour, appName, seconds)
-        } else {
-            const totalMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin)
-            if (totalMinutes <= 0) {
-                addToHour(hours, startHour, appName, seconds)
-                continue
-            }
-            const firstHourMinutes = 60 - startMin
-            const lastHourMinutes = endMin
-            for (let h = startHour; h <= Math.min(endHour, 23); h++) {
-                let fraction: number
-                if (h === startHour) fraction = firstHourMinutes / totalMinutes
-                else if (h === endHour) fraction = lastHourMinutes / totalMinutes
-                else fraction = 60 / totalMinutes
-                addToHour(hours, h, appName, Math.round(seconds * fraction))
-            }
-        }
-    }
-
-    // Pattern 2: table format "| 09:15 - 09:45 | AppName | 30分 |"
-    if (!found) {
-        const tablePattern = /\|\s*(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/g
-        while ((match = tablePattern.exec(rawReport)) !== null) {
-            const startHour = parseInt(match[1], 10)
-            const appName = match[5].trim()
-            const durationText = match[6].trim()
-
-            if (startHour < 0 || startHour > 23) continue
-            if (/序号|时间|应用|时长/.test(appName)) continue
-
-            const seconds = parseDuration(durationText)
-            if (seconds <= 0) continue
-            found = true
-            addToHour(hours, startHour, appName, seconds)
-        }
-    }
-
-    const maxSeconds = Math.max(
-        ...hours.map((entries) => entries.reduce((sum, e) => sum + e.seconds, 0)),
-        0
-    )
-    return { hours, maxSeconds }
-}
-
-function addToHour(
-    hours: Array<Array<{ app: string; seconds: number }>>,
-    hour: number,
-    app: string,
-    seconds: number
-): void {
-    if (hour < 0 || hour > 23 || seconds <= 0) return
-    const existing = hours[hour].find((e) => e.app === app)
-    if (existing) existing.seconds += seconds
-    else hours[hour].push({ app, seconds })
-}
-
-function looksLikeDuration(text: string): boolean {
-    return /(\d+\s*(小时|时|分|秒|h|m|s))|未知/i.test(text)
-}
-
-function parseCount(text: string): number {
-    return Number(text.match(/\d+/)?.[0] || 0)
-}
-
-function parseDuration(text: string): number {
-    const h = parseInt(text.match(/(\d+)\s*(?:小时|时|h)/i)?.[1] ?? '0', 10)
-    const m = parseInt(text.match(/(\d+)\s*(?:分钟|分|m)/i)?.[1] ?? '0', 10)
-    const s = parseInt(text.match(/(\d+)\s*(?:秒|s)/i)?.[1] ?? '0', 10)
-    return h * 3600 + m * 60 + s
-}
-
-/**
- * 从活动时间线 <details> 表格中提取时间段数据
- * 格式示例：| 14:30-15:00 | 30分0秒 | Chrome | claude.ai |
- */
-function extractActivityTimeline(rawReport: string): TimelineEntry[] {
-    const timeline: TimelineEntry[] = []
-
-    // 查找 <details> 块
-    const detailsMatch = rawReport.match(/<details>[\s\S]*?<\/details>/i)
-    if (!detailsMatch) return timeline
-
-    const detailsContent = detailsMatch[0]
-
-    // 解析表格行：| 时间段 | 时长 | 应用 | 窗口 |
-    const tableRowPattern = /\|\s*(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/g
-    let match: RegExpExecArray | null
-
-    while ((match = tableRowPattern.exec(detailsContent)) !== null) {
-        const startTime = match[1].trim()
-        const endTime = match[2].trim()
-        const duration = match[3].trim()
-        const app = match[4].trim()
-        const window = match[5].trim()
-
-        // 跳过表头
-        if (/时间段|时长|应用|窗口/i.test(app) || /^[-:]+$/.test(app)) continue
-
-        timeline.push({
-            startTime,
-            endTime,
-            duration,
-            app,
-            window
-        })
-    }
-
-    return timeline
-}
-
-/**
- * 从时间线数据重建 24 小时活跃数据
- * 将每个时间段按小时拆分，计算每小时的活跃分钟数和应用分布
- */
-function buildHourlyDataFromTimeline(timeline: TimelineEntry[]): {
-    hourlyActivity: HourlyActivity
-    hourlyAppBreakdown: HourlyAppBreakdown
-    maxSeconds: number
-} {
-    const hourlySeconds = new Array<number>(24).fill(0)
-    const hourlyApps: Array<Map<string, number>> = Array.from({ length: 24 }, () => new Map())
-
-    for (const entry of timeline) {
-        const [startHour, startMin] = entry.startTime.split(':').map(Number)
-        const [endHour, endMin] = entry.endTime.split(':').map(Number)
-        const totalSeconds = parseDuration(entry.duration)
-
-        if (startHour < 0 || startHour > 23 || totalSeconds <= 0) continue
-
-        // 单小时内的活动
-        if (startHour === endHour || (endHour === startHour + 1 && endMin === 0)) {
-            hourlySeconds[startHour] += totalSeconds
-            const existing = hourlyApps[startHour].get(entry.app) || 0
-            hourlyApps[startHour].set(entry.app, existing + totalSeconds)
-        } else {
-            // 跨小时活动，按比例分配
-            const totalMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin)
-            if (totalMinutes <= 0) {
-                // 异常情况，全部算在起始小时
-                hourlySeconds[startHour] += totalSeconds
-                const existing = hourlyApps[startHour].get(entry.app) || 0
-                hourlyApps[startHour].set(entry.app, existing + totalSeconds)
-                continue
-            }
-
-            const firstHourMinutes = 60 - startMin
-            const lastHourMinutes = endMin
-
-            for (let h = startHour; h <= Math.min(endHour, 23); h++) {
-                let fraction: number
-                if (h === startHour) {
-                    fraction = firstHourMinutes / totalMinutes
-                } else if (h === endHour) {
-                    fraction = lastHourMinutes / totalMinutes
-                } else {
-                    fraction = 60 / totalMinutes
-                }
-
-                const seconds = Math.round(totalSeconds * fraction)
-                hourlySeconds[h] += seconds
-                const existing = hourlyApps[h].get(entry.app) || 0
-                hourlyApps[h].set(entry.app, existing + seconds)
-            }
-        }
-    }
-
-    const maxSeconds = Math.max(...hourlySeconds, 0)
-
-    return {
-        hourlyActivity: {
-            hours: hourlySeconds,
-            maxSeconds
-        },
-        hourlyAppBreakdown: {
-            hours: hourlyApps.map((appMap) =>
-                [...appMap.entries()].map(([app, seconds]) => ({ app, seconds }))
-            ),
-            maxSeconds
-        },
-        maxSeconds
-    }
-}
-
+// 格式化时长（秒 -> "X小时Y分Z秒"）
 function formatDuration(seconds: number): string {
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
@@ -527,10 +125,225 @@ function formatDuration(seconds: number): string {
     return parts.join('')
 }
 
-function sumNumbers(values: number[]): number {
-    return values.reduce((sum, value) => sum + value, 0)
+// 将 API 原始数据转换为时间线条目
+export function convertToTimelineEntries(activities: TimelineActivity[]): TimelineEntry[] {
+    return activities.map(activity => ({
+        startTime: formatBeijingTime(activity.timestamp),
+        endTime: formatBeijingTime(activity.timestamp + activity.duration),
+        duration: activity.duration,
+        app: activity.app_name,
+        window: activity.window_title,
+        category: activity.semantic_category
+    }))
 }
 
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// 从时间线构建每小时活跃数据
+export function buildHourlyDataFromTimeline(timeline: TimelineEntry[]): {
+    hourlyActivity: HourlyActivity
+    hourlyAppBreakdown: HourlyAppBreakdown
+    maxSeconds: number
+} {
+    const hourlySeconds = Array(24).fill(0)
+    const hourlyApps: Map<string, number>[] = Array.from({ length: 24 }, () => new Map())
+
+    for (const entry of timeline) {
+        const [startH, startM] = entry.startTime.split(':').map(Number)
+        const [endH, endM] = entry.endTime.split(':').map(Number)
+
+        const totalSeconds = entry.duration
+        const totalMinutes = totalSeconds / 60
+
+        // 计算跨越的小时范围
+        let currentHour = startH
+        let remainingMinutes = totalMinutes
+
+        while (remainingMinutes > 0 && currentHour <= 23) {
+            let minutesInThisHour: number
+
+            if (currentHour === startH) {
+                // 第一个小时：从 startM 到 60
+                minutesInThisHour = Math.min(60 - startM, remainingMinutes)
+            } else if (currentHour === endH) {
+                // 最后一个小时：从 0 到 endM
+                minutesInThisHour = Math.min(endM, remainingMinutes)
+            } else {
+                // 中间小时：完整 60 分钟
+                minutesInThisHour = Math.min(60, remainingMinutes)
+            }
+
+            const secondsInThisHour = Math.round(minutesInThisHour * 60)
+            hourlySeconds[currentHour] += secondsInThisHour
+
+            const existing = hourlyApps[currentHour].get(entry.app) || 0
+            hourlyApps[currentHour].set(entry.app, existing + secondsInThisHour)
+
+            remainingMinutes -= minutesInThisHour
+            currentHour++
+        }
+    }
+
+    // 防止某个小时超过 3600 秒
+    for (let i = 0; i < 24; i++) {
+        hourlySeconds[i] = Math.min(hourlySeconds[i], 3600)
+    }
+
+    const maxSeconds = Math.max(...hourlySeconds, 0)
+
+    return {
+        hourlyActivity: {
+            hours: hourlySeconds,
+            maxSeconds
+        },
+        hourlyAppBreakdown: {
+            hours: hourlyApps.map((appMap) =>
+                [...appMap.entries()]
+                    .map(([app, seconds]) => ({ app, seconds }))
+                    .sort((a, b) => b.seconds - a.seconds)
+            ),
+            maxSeconds
+        },
+        maxSeconds
+    }
+}
+
+// 提取报告指标
+export function extractReportMetrics(
+    activities: TimelineActivity[],
+    date: string
+): ReportMetrics {
+    if (activities.length === 0) {
+        return {
+            date,
+            totalDuration: '0秒',
+            screenshotCount: 0,
+            appCount: 0,
+            topApps: [],
+            hourlyActivity: { hours: Array(24).fill(0), maxSeconds: 0 },
+            hourlyAppBreakdown: { hours: Array(24).fill(0).map(() => []), maxSeconds: 0 }
+        }
+    }
+
+    const timeline = convertToTimelineEntries(activities)
+    const hourlyData = buildHourlyDataFromTimeline(timeline)
+
+    // 计算总时长
+    const totalSeconds = activities.reduce((sum, a) => sum + a.duration, 0)
+    const totalDuration = formatDuration(totalSeconds)
+
+    // 统计应用使用时长
+    const appDurations = new Map<string, number>()
+    for (const activity of activities) {
+        const existing = appDurations.get(activity.app_name) || 0
+        appDurations.set(activity.app_name, existing + activity.duration)
+    }
+
+    // Top 应用排行
+    const topApps = [...appDurations.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([name, seconds]) => ({
+            name,
+            duration: formatDuration(seconds)
+        }))
+
+    return {
+        date,
+        totalDuration,
+        screenshotCount: activities.length,
+        appCount: appDurations.size,
+        topApps,
+        hourlyActivity: hourlyData.hourlyActivity,
+        hourlyAppBreakdown: hourlyData.hourlyAppBreakdown
+    }
+}
+
+// 聚合多天数据（用于周报）
+export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics {
+    if (metrics.length === 0) {
+        throw new Error('没有可聚合的数据')
+    }
+
+    const allApps = new Map<string, number>()
+    let totalSeconds = 0
+    let totalScreenshots = 0
+    const allAppNames = new Set<string>()
+
+    for (const metric of metrics) {
+        // 解析总时长
+        const durationMatch = metric.totalDuration.match(/(\d+)小时|(\d+)分|(\d+)秒/g)
+        if (durationMatch) {
+            let seconds = 0
+            for (const part of durationMatch) {
+                if (part.includes('小时')) seconds += parseInt(part) * 3600
+                else if (part.includes('分')) seconds += parseInt(part) * 60
+                else if (part.includes('秒')) seconds += parseInt(part)
+            }
+            totalSeconds += seconds
+        }
+
+        totalScreenshots += metric.screenshotCount
+
+        // 聚合应用时长
+        for (const app of metric.topApps) {
+            const durationMatch = app.duration.match(/(\d+)小时|(\d+)分|(\d+)秒/g)
+            if (durationMatch) {
+                let seconds = 0
+                for (const part of durationMatch) {
+                    if (part.includes('小时')) seconds += parseInt(part) * 3600
+                    else if (part.includes('分')) seconds += parseInt(part) * 60
+                    else if (part.includes('秒')) seconds += parseInt(part)
+                }
+                const existing = allApps.get(app.name) || 0
+                allApps.set(app.name, existing + seconds)
+            }
+            allAppNames.add(app.name)
+        }
+    }
+
+    // 聚合每小时数据
+    const hourlySeconds = Array(24).fill(0)
+    const hourlyApps: Map<string, number>[] = Array.from({ length: 24 }, () => new Map())
+
+    for (const metric of metrics) {
+        for (let h = 0; h < 24; h++) {
+            hourlySeconds[h] += metric.hourlyActivity.hours[h]
+            for (const { app, seconds } of metric.hourlyAppBreakdown.hours[h]) {
+                const existing = hourlyApps[h].get(app) || 0
+                hourlyApps[h].set(app, existing + seconds)
+            }
+        }
+    }
+
+    const maxSeconds = Math.max(...hourlySeconds, 0)
+
+    const topApps = [...allApps.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([name, seconds]) => ({
+            name,
+            duration: formatDuration(seconds)
+        }))
+
+    const startDate = metrics[0].date
+    const endDate = metrics[metrics.length - 1].date
+
+    return {
+        date: `${startDate} ~ ${endDate}`,
+        totalDuration: formatDuration(totalSeconds),
+        screenshotCount: totalScreenshots,
+        appCount: allAppNames.size,
+        topApps,
+        hourlyActivity: {
+            hours: hourlySeconds,
+            maxSeconds
+        },
+        hourlyAppBreakdown: {
+            hours: hourlyApps.map((appMap) =>
+                [...appMap.entries()]
+                    .map(([app, seconds]) => ({ app, seconds }))
+                    .sort((a, b) => b.seconds - a.seconds)
+            ),
+            maxSeconds
+        }
+    }
 }

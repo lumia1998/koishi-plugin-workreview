@@ -283,6 +283,13 @@ body {
     border-top: 1.5px dashed rgba(93, 64, 55, 0.2);
 }
 
+.top-apps-title {
+    font-family: var(--font-title);
+    font-size: 1rem;
+    color: var(--ink-primary);
+    margin-bottom: 10px;
+}
+
 .top-app-item {
     margin-bottom: 10px;
 }

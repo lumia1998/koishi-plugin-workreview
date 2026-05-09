@@ -49,7 +49,7 @@ export class ActivityRenderer {
             appLegend: this.generateLegend(topApps, colorMap),
             topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
             summaryTitle: escapeHtml(data.summaryTitle),
-            summary: escapeHtml(data.analysis.text || '暂无分析')
+            summary: this.formatSummaryText(data.analysis.text || '暂无分析')
         })
 
         const page = await this.ctx.puppeteer.page()
@@ -172,6 +172,16 @@ export class ActivityRenderer {
                     <div class="top-app-comment">${escapeHtml(commentText)}</div>
                 </div>`
             })
+            .join('')
+    }
+
+    private formatSummaryText(text: string): string {
+        // 将文本按换行符分段，每段用 <p> 包裹，保留完整内容
+        const paragraphs = text.split('\n').filter(line => line.trim())
+        if (paragraphs.length === 0) return '<p>暂无分析</p>'
+
+        return paragraphs
+            .map(para => `<p>${escapeHtml(para)}</p>`)
             .join('')
     }
 

@@ -34,7 +34,7 @@ export class ActivityLLM {
     async analyze(
         deviceName: string,
         date: string,
-        rawReport: string,
+        activitySummary: string,
         topApps?: string[]
     ): Promise<ActivityAnalysis> {
         const modelRef = await this.loadModel()
@@ -56,10 +56,10 @@ export class ActivityLLM {
         const systemPrompt = [
             this.config.stylePrompt,
             '',
-            '请根据用户提供的 Work_Review 原始活动日报，用你的风格总结用户这一天都做了什么。',
+            '请根据用户提供的活动数据摘要，用你的风格总结用户这一天都做了什么。',
             '要求：',
             '- 必须使用中文。',
-            '- 不要重复原始表格数据，用自己的话概括。',
+            '- 不要重复原始数据，用自己的话概括。',
             '- 不要分类（不要写”亮点/风险/建议/效率评估”之类的标题）。',
             '- 直接输出一段连贯的总结文本，像在跟用户聊天一样。',
             '- 如果数据明显偏娱乐或样本不足，也可以吐槽。',
@@ -71,7 +71,7 @@ export class ActivityLLM {
             model.invoke(
                 [
                     new SystemMessage(systemPrompt),
-                    new HumanMessage(`设备：${deviceName}\n日期：${date}\n\n原始日报：\n${rawReport}`)
+                    new HumanMessage(`设备：${deviceName}\n日期：${date}\n\n活动摘要：\n${activitySummary}`)
                 ],
                 { temperature: this.config.temperature }
             ),
