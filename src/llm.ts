@@ -108,7 +108,7 @@ export class ActivityLLM {
             .filter((item) => item.name && item.comment && topApps.some(
                 (app) => item.name.includes(app) || app.includes(item.name)
             ))
-            .slice(0, 3)
+            .slice(0, 5)
 
         return { text, appComments }
     }

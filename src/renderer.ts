@@ -263,12 +263,23 @@ function normalizeAppName(value: string): string {
 }
 
 function buildFallbackComment(appName: string, rank: number): string {
-    if (/chrome|edge|浏览器/i.test(appName)) return '浏览器开得很勤，看来今天又在四处找答案。'
+    if (/chrome|edge|浏览器|firefox/i.test(appName)) return '浏览器开得很勤，看来今天又在四处找答案。'
     if (/qq|微信|wechat|telegram|slack|discord/i.test(appName)) return '消息窗口常驻，注意力也被它顺手接管了。'
-    if (/vscode|cursor|code|ide/i.test(appName)) return '和代码缠斗的痕迹很明显，今天没少动脑。'
+    if (/vscode|cursor|code|ide|vim|neovim/i.test(appName)) return '和代码缠斗的痕迹很明显，今天没少动脑。'
     if (/excel|spreadsheet|表格/i.test(appName)) return '表格味很重，应该是在和数字认真较劲。'
     if (/notion|obsidian|docs|word|文档/i.test(appName)) return '文档型工作不少，脑子和页面一起在转。'
-    return `第${rank}名选手，今天存在感不低。`
+    if (/terminal|终端|powershell|cmd|iterm|warp/i.test(appName)) return '终端敲得不少，命令行选手实锤了。'
+    if (/game|steam|league|lol|原神|genshin|spire/i.test(appName)) return '游戏时间到位了，劳逸结合嘛。'
+    if (/figma|sketch|photoshop|illustrator/i.test(appName)) return '设计工具在线，像素级较真中。'
+    if (/music|spotify|网易云|qqmusic/i.test(appName)) return 'BGM 一直在线，干活得有氛围感。'
+    const fallbacks = [
+        '悄悄占了一席之地，存在感不低。',
+        '不声不响地混进了排行榜。',
+        '今天也有它的戏份，虽然不多。',
+        '默默上榜，看来用得不少。',
+        '排名靠后但没缺席，也算敬业。'
+    ]
+    return fallbacks[(rank - 1) % fallbacks.length]
 }
 
 

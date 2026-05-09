@@ -194,7 +194,7 @@ body {
     display: flex;
     flex-wrap: wrap;
     gap: 6px 12px;
-    justify-content: center;
+    justify-content: flex-start;
     margin-top: 10px;
     padding-top: 8px;
 }
@@ -213,12 +213,12 @@ body {
 }
 
 .legend-name {
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     color: var(--ink-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 80px;
+    max-width: 100px;
 }
 
 .chart-container-horizontal {
