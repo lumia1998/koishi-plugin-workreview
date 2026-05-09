@@ -45,6 +45,14 @@ export interface ReportMetrics {
     hourlyActivity: HourlyActivity
     hourlyAppBreakdown: HourlyAppBreakdown
     categoryBreakdown: Array<{ category: string; seconds: number }>
+    topBrowserSites: BrowserSite[]
+}
+
+export interface BrowserSite {
+    domain: string
+    seconds: number
+    duration: string
+    titles: string[]
 }
 
 export class WorkReviewClient {
@@ -221,7 +229,8 @@ export function extractReportMetrics(
             topApps: [],
             hourlyActivity: { hours: Array(24).fill(0), maxSeconds: 0 },
             hourlyAppBreakdown: { hours: Array(24).fill(0).map(() => []), maxSeconds: 0 },
-            categoryBreakdown: []
+            categoryBreakdown: [],
+            topBrowserSites: []
         }
     }
 
@@ -259,6 +268,9 @@ export function extractReportMetrics(
         .sort((a, b) => b[1] - a[1])
         .map(([category, seconds]) => ({ category, seconds }))
 
+    // 浏览器访问统计
+    const topBrowserSites = extractBrowserSites(activities)
+
     return {
         date,
         totalDuration,
@@ -267,7 +279,8 @@ export function extractReportMetrics(
         topApps,
         hourlyActivity: hourlyData.hourlyActivity,
         hourlyAppBreakdown: hourlyData.hourlyAppBreakdown,
-        categoryBreakdown
+        categoryBreakdown,
+        topBrowserSites
     }
 }
 
@@ -368,8 +381,30 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
         },
         categoryBreakdown: [...allCategories.entries()]
             .sort((a, b) => b[1] - a[1])
-            .map(([category, seconds]) => ({ category, seconds }))
+            .map(([category, seconds]) => ({ category, seconds })),
+        topBrowserSites: aggregateBrowserSites(metrics)
     }
+}
+
+function aggregateBrowserSites(metrics: ReportMetrics[]): BrowserSite[] {
+    const siteMap = new Map<string, { seconds: number; titles: Set<string> }>()
+    for (const metric of metrics) {
+        for (const site of metric.topBrowserSites) {
+            const existing = siteMap.get(site.domain) || { seconds: 0, titles: new Set() }
+            existing.seconds += site.seconds
+            for (const title of site.titles) existing.titles.add(title)
+            siteMap.set(site.domain, existing)
+        }
+    }
+    return [...siteMap.entries()]
+        .sort((a, b) => b[1].seconds - a[1].seconds)
+        .slice(0, 5)
+        .map(([domain, data]) => ({
+            domain,
+            seconds: data.seconds,
+            duration: formatDuration(data.seconds),
+            titles: [...data.titles].slice(0, 3)
+        }))
 }
 
 const CATEGORY_NAME_MAP: Record<string, string> = {
@@ -389,4 +424,40 @@ function mapCategoryName(raw: string): string {
     if (CATEGORY_NAME_MAP[lower]) return CATEGORY_NAME_MAP[lower]
     if (lower.startsWith('cat-')) return '其他'
     return raw
+}
+
+function extractBrowserSites(activities: TimelineActivity[]): BrowserSite[] {
+    const siteMap = new Map<string, { seconds: number; titles: Set<string> }>()
+
+    for (const activity of activities) {
+        if (!activity.browser_url) continue
+        const domain = extractDomain(activity.browser_url)
+        if (!domain) continue
+
+        const existing = siteMap.get(domain) || { seconds: 0, titles: new Set() }
+        existing.seconds += activity.duration
+        if (activity.window_title) {
+            existing.titles.add(activity.window_title)
+        }
+        siteMap.set(domain, existing)
+    }
+
+    return [...siteMap.entries()]
+        .sort((a, b) => b[1].seconds - a[1].seconds)
+        .slice(0, 5)
+        .map(([domain, data]) => ({
+            domain,
+            seconds: data.seconds,
+            duration: formatDuration(data.seconds),
+            titles: [...data.titles].slice(0, 3)
+        }))
+}
+
+function extractDomain(url: string): string | null {
+    try {
+        const hostname = new URL(url).hostname
+        return hostname.replace(/^www\./, '')
+    } catch {
+        return null
+    }
 }

@@ -66,6 +66,7 @@ export class ActivityRenderer {
             appLegend: this.generateLegend(topApps, colorMap),
             categoryPieChart: this.generateCategoryPieChart(data.metrics.categoryBreakdown),
             topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
+            browserSites: this.generateBrowserSites(data.metrics.topBrowserSites, data.analysis.siteComments),
             summaryTitle: escapeHtml(data.summaryTitle),
             summary: this.formatSummaryText(data.analysis.text || '暂无分析')
         })
@@ -193,6 +194,31 @@ export class ActivityRenderer {
             .join('')
     }
 
+    private generateBrowserSites(
+        sites: ReportMetrics['topBrowserSites'],
+        siteComments: AppComment[]
+    ): string {
+        if (!sites.length) return ''
+
+        const items = sites.map((site, index) => {
+            const comment = siteComments.find(
+                (c) => c.name.includes(site.domain) || site.domain.includes(c.name)
+            )
+            const commentText = comment?.comment || '常客一枚。'
+            return `
+                <div class="top-app-item">
+                    <div class="top-app-header">
+                        <span class="top-app-rank">${index + 1}</span>
+                        <span class="top-app-name">${escapeHtml(site.domain)}</span>
+                        <span class="top-app-duration">${escapeHtml(site.duration)}</span>
+                    </div>
+                    <div class="top-app-comment">${escapeHtml(commentText)}</div>
+                </div>`
+        }).join('')
+
+        return items
+    }
+
     private generateCategoryPieChart(
         categoryBreakdown: Array<{ category: string; seconds: number }>
     ): string {
@@ -244,13 +270,31 @@ export class ActivityRenderer {
     }
 
     private formatSummaryText(text: string): string {
-        // 将文本按换行符分段，每段用 <p> 包裹，保留完整内容
         const paragraphs = text.split('\n').filter(line => line.trim())
         if (paragraphs.length === 0) return '<p>暂无分析</p>'
 
-        return paragraphs
-            .map(para => `<p>${escapeHtml(para)}</p>`)
-            .join('')
+        const suggestionKeywords = /^(建议|施舍建议|温馨提示|忠告|提醒)/
+        let inSuggestion = false
+        const parts: string[] = []
+
+        for (const para of paragraphs) {
+            const formatted = this.formatInlineMarkers(escapeHtml(para))
+            if (!inSuggestion && suggestionKeywords.test(para.trim())) {
+                inSuggestion = true
+                parts.push(`<div class="summary-suggestion"><p>${formatted}</p>`)
+            } else if (inSuggestion) {
+                parts.push(`<p>${formatted}</p>`)
+            } else {
+                parts.push(`<p>${formatted}</p>`)
+            }
+        }
+
+        if (inSuggestion) parts.push('</div>')
+        return parts.join('')
+    }
+
+    private formatInlineMarkers(text: string): string {
+        return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     }
 
     private getResourcePath(filename: string): string {
@@ -263,7 +307,7 @@ function normalizeAppName(value: string): string {
 }
 
 function buildFallbackComment(appName: string, rank: number): string {
-    if (/chrome|edge|浏览器|firefox/i.test(appName)) return '浏览器开得很勤，看来今天又在四处找答案。'
+    if (/chrome|edge|浏览器|firefox|browser/i.test(appName)) return '浏览器开得很勤，看来今天又在四处找答案。'
     if (/qq|微信|wechat|telegram|slack|discord/i.test(appName)) return '消息窗口常驻，注意力也被它顺手接管了。'
     if (/vscode|cursor|code|ide|vim|neovim/i.test(appName)) return '和代码缠斗的痕迹很明显，今天没少动脑。'
     if (/excel|spreadsheet|表格/i.test(appName)) return '表格味很重，应该是在和数字认真较劲。'

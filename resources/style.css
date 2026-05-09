@@ -82,7 +82,7 @@ body {
     flex-direction: column;
     align-items: center;
     background: #fff;
-    padding: 14px 36px 40px;
+    padding: 14px 36px 20px;
     border: 3px dashed var(--ink-primary);
     border-radius: 15px;
     box-shadow: 4px 4px 0 var(--color-blue);
@@ -92,17 +92,10 @@ body {
 
 .title-sticker h1 {
     font-family: var(--font-title);
-    font-size: 2rem;
+    font-size: 2.2rem;
     color: var(--accent-orange);
     margin: 0;
     line-height: 1.3;
-}
-
-.title-sticker .subtitle {
-    font-family: var(--font-hand);
-    font-size: 1.1rem;
-    color: var(--ink-secondary);
-    margin-top: 2px;
 }
 
 .tape {
@@ -122,40 +115,43 @@ body {
 
 .date-badge {
     position: absolute;
-    bottom: -15px;
-    right: -15px;
+    top: -10px;
+    right: -20px;
     background: var(--color-yellow);
-    padding: 5px 14px;
+    padding: 4px 10px;
     font-family: var(--font-hand);
-    font-size: 1rem;
+    font-size: 0.85rem;
     box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.1);
-    transform: rotate(-3deg);
+    transform: rotate(3deg);
     border: 1px solid var(--ink-secondary);
     border-radius: 3px;
     z-index: 5;
 }
 
-.duration-badge {
-    display: inline-flex;
+.stamp {
+    position: absolute;
+    bottom: -10px;
+    left: -16px;
+    display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 20px;
-    padding: 8px 18px;
-    background: var(--color-green);
-    border-radius: 20px;
-    border: 1.5px solid rgba(93, 64, 55, 0.2);
-    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.05);
-}
-
-.duration-badge .doodle {
-    color: var(--accent-orange);
-    font-size: 1.2em;
-}
-
-.duration-text {
+    justify-content: center;
+    padding: 3px 6px;
     font-family: var(--font-title);
+    font-size: 0.7rem;
+    color: #c62828;
+    border: 2px solid #c62828;
+    border-radius: 3px;
+    transform: rotate(-12deg);
+    opacity: 0.8;
+    white-space: nowrap;
+    letter-spacing: 1px;
+}
+
+.device-name {
+    margin-top: 14px;
+    font-family: var(--font-hand);
     font-size: 1rem;
-    color: var(--ink-primary);
+    color: var(--ink-secondary);
 }
 
 /* ==================== 24H 活跃图表 + 应用 ==================== */
@@ -265,6 +261,7 @@ body {
 .bar-segment {
     width: 100%;
     min-height: 1px;
+    box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.6);
 }
 
 .bar-label-x {
@@ -348,16 +345,18 @@ body {
     font-weight: 500;
     font-family: var(--font-hand);
     font-size: 0.85rem;
-    min-width: 30px;
+    width: 32px;
     text-align: right;
+    flex-shrink: 0;
 }
 
 .category-duration {
     color: var(--ink-secondary);
     font-family: var(--font-hand);
     font-size: 0.8rem;
-    min-width: 36px;
+    width: 42px;
     text-align: right;
+    flex-shrink: 0;
 }
 
 /* ==================== 应用时长 Top 5 ==================== */
@@ -431,6 +430,22 @@ body {
     line-height: 1.4;
 }
 
+/* ==================== 浏览足迹 ==================== */
+.browser-section {
+    padding: 16px;
+    background: #fff;
+    border: 1.5px solid rgba(93, 64, 55, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 4px 4px 0 var(--color-blue);
+    margin-bottom: 24px;
+}
+
+.browser-section .top-apps-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 /* ==================== 总结便签 ==================== */
 .summary-note {
     background: var(--color-yellow);
@@ -487,8 +502,29 @@ body {
     font-family: var(--font-hand);
     font-size: 1rem;
     color: var(--ink-primary);
-    line-height: 1.7;
-    margin-bottom: 8px;
+    line-height: 1.9;
+    margin-bottom: 12px;
+}
+
+.summary-note p:last-child {
+    margin-bottom: 0;
+}
+
+.summary-note strong {
+    color: var(--accent-orange);
+    font-weight: 700;
+}
+
+.summary-suggestion {
+    margin-top: 14px;
+    padding: 10px 14px;
+    background: rgba(255, 112, 67, 0.08);
+    border-left: 3px solid var(--accent-orange);
+    border-radius: 0 6px 6px 0;
+}
+
+.summary-suggestion p {
+    margin-bottom: 6px;
 }
 
 .empty {

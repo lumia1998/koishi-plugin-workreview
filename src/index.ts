@@ -230,8 +230,9 @@ export function apply(ctx: Context, config: Config) {
             const metrics = extractReportMetrics(activities, date)
             const activitySummary = buildActivitySummary(activities, metrics)
             const topAppNames = metrics.topApps.slice(0, 5).map((app) => app.name)
+            const browserSiteNames = metrics.topBrowserSites.map((site) => site.domain)
 
-            const analysis = await llm.analyze(deviceName, date, activitySummary, topAppNames)
+            const analysis = await llm.analyze(deviceName, date, activitySummary, topAppNames, browserSiteNames)
 
             if (options.text || config.outputMode === 'text') {
                 await session.send(formatTextReport(deviceName, date, analysis))
@@ -282,10 +283,11 @@ export function apply(ctx: Context, config: Config) {
 
             const weeklyMetrics = aggregateReportMetrics(allMetrics)
             const topAppNames = weeklyMetrics.topApps.slice(0, 5).map((app) => app.name)
+            const browserSiteNames = weeklyMetrics.topBrowserSites.map((site) => site.domain)
 
             // 构建周报摘要
             const weeklySummary = buildWeeklySummary(allMetrics)
-            const analysis = await llm.analyze(deviceName, weeklyMetrics.date, weeklySummary, topAppNames)
+            const analysis = await llm.analyze(deviceName, weeklyMetrics.date, weeklySummary, topAppNames, browserSiteNames)
 
             const imageBuffer = await renderer.render({
                 deviceName,
@@ -321,6 +323,15 @@ export function apply(ctx: Context, config: Config) {
             '主要活动类别:',
             ...getCategoryDistribution(activities)
         ]
+
+        if (metrics.topBrowserSites?.length) {
+            lines.push('', '浏览器访问记录:')
+            for (const site of metrics.topBrowserSites) {
+                const titles = site.titles.length ? `: "${site.titles.join('", "')}"` : ''
+                lines.push(`- ${site.domain} (${site.duration})${titles}`)
+            }
+        }
+
         return lines.join('\n')
     }
 

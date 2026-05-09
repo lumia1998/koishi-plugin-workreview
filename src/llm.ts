@@ -13,6 +13,7 @@ export interface AppComment {
 export interface ActivityAnalysis {
     text: string
     appComments: AppComment[]
+    siteComments: AppComment[]
 }
 
 export class ActivityLLM {
@@ -35,7 +36,8 @@ export class ActivityLLM {
         deviceName: string,
         date: string,
         activitySummary: string,
-        topApps?: string[]
+        topApps?: string[],
+        browserSites?: string[]
     ): Promise<ActivityAnalysis> {
         const modelRef = await this.loadModel()
         const model = modelRef.value
@@ -53,6 +55,18 @@ export class ActivityLLM {
             ]
             : []
 
+        const browserCommentInstruction = browserSites?.length
+            ? [
+                '',
+                `再对以下最常访问的网站各写一句简短锐评（10-20字，幽默吐槽风格，根据域名和上下文判断网站用途）：`,
+                ...browserSites.map((site, i) => `${i + 1}. ${site}`),
+                '',
+                '在应用锐评之后，用以下格式输出网站锐评（每行一个）：',
+                '---SITE_COMMENTS---',
+                ...browserSites.map((site) => `${site}: 你的锐评`),
+            ]
+            : []
+
         const systemPrompt = [
             this.config.stylePrompt,
             '',
@@ -63,8 +77,11 @@ export class ActivityLLM {
             '- 不要分类（不要写”亮点/风险/建议/效率评估”之类的标题）。',
             '- 直接输出一段连贯的总结文本，像在跟用户聊天一样。',
             '- 如果数据明显偏娱乐或样本不足，也可以吐槽。',
-            '- 不要输出 JSON，不要用 markdown 格式，直接输出纯文本。',
-            ...appCommentInstruction
+            '- 用 **双星号** 包裹关键数据和重点信息（如时长、时间点、关键行为），方便用户快速扫读。',
+            '- 最后一段如果有建议，请以”建议”二字开头。',
+            '- 不要输出 JSON，不要用 markdown 格式（除了加粗），直接输出纯文本。',
+            ...appCommentInstruction,
+            ...browserCommentInstruction
         ].join('\n')
 
         const result = await Promise.race([
@@ -81,20 +98,40 @@ export class ActivityLLM {
         ])
 
         const raw = getMessageContent(result.content).trim()
-        return this.parseAnalysisResponse(raw, topApps || [])
+        return this.parseAnalysisResponse(raw, topApps || [], browserSites || [])
     }
 
-    private parseAnalysisResponse(raw: string, topApps: string[]): ActivityAnalysis {
-        const marker = '---APP_COMMENTS---'
-        const markerIndex = raw.indexOf(marker)
+    private parseAnalysisResponse(raw: string, topApps: string[], browserSites: string[]): ActivityAnalysis {
+        const appMarker = '---APP_COMMENTS---'
+        const siteMarker = '---SITE_COMMENTS---'
 
-        if (markerIndex < 0) {
-            return { text: raw, appComments: [] }
+        const appMarkerIndex = raw.indexOf(appMarker)
+        if (appMarkerIndex < 0) {
+            return { text: raw, appComments: [], siteComments: [] }
         }
 
-        const text = raw.slice(0, markerIndex).trim()
-        const commentsSection = raw.slice(markerIndex + marker.length).trim()
-        const appComments = commentsSection
+        const text = raw.slice(0, appMarkerIndex).trim()
+        const afterAppMarker = raw.slice(appMarkerIndex + appMarker.length).trim()
+
+        let appSection: string
+        let siteSection = ''
+        const siteMarkerIndex = afterAppMarker.indexOf(siteMarker)
+        if (siteMarkerIndex >= 0) {
+            appSection = afterAppMarker.slice(0, siteMarkerIndex).trim()
+            siteSection = afterAppMarker.slice(siteMarkerIndex + siteMarker.length).trim()
+        } else {
+            appSection = afterAppMarker
+        }
+
+        const appComments = this.parseCommentLines(appSection, topApps, 5)
+        const siteComments = this.parseCommentLines(siteSection, browserSites, 5)
+
+        return { text, appComments, siteComments }
+    }
+
+    private parseCommentLines(section: string, names: string[], limit: number): AppComment[] {
+        if (!section) return []
+        return section
             .split('\n')
             .map((line) => line.trim())
             .filter((line) => line.includes(':') || line.includes('：'))
@@ -105,11 +142,9 @@ export class ActivityLLM {
                 const comment = line.slice(idx + sep.length).trim()
                 return { name, comment }
             })
-            .filter((item) => item.name && item.comment && topApps.some(
-                (app) => item.name.includes(app) || app.includes(item.name)
+            .filter((item) => item.name && item.comment && names.some(
+                (n) => item.name.includes(n) || n.includes(item.name)
             ))
-            .slice(0, 5)
-
-        return { text, appComments }
+            .slice(0, limit)
     }
 }
