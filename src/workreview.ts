@@ -429,15 +429,30 @@ function mapCategoryName(raw: string): string {
 function extractBrowserSites(activities: TimelineActivity[]): BrowserSite[] {
     const siteMap = new Map<string, { seconds: number; titles: Set<string> }>()
 
+    const browserApps = new Set<string>()
     for (const activity of activities) {
-        if (!activity.browser_url) continue
-        const domain = extractDomain(activity.browser_url)
+        if (activity.browser_url) {
+            browserApps.add(activity.app_name)
+        }
+    }
+
+    for (const activity of activities) {
+        let domain: string | null = null
+        let title = activity.window_title || ''
+
+        if (activity.browser_url) {
+            domain = extractDomain(activity.browser_url)
+        } else if (browserApps.has(activity.app_name) || isBrowserApp(activity.app_name)) {
+            domain = extractDomainFromTitle(title, activity.app_name)
+        }
+
         if (!domain) continue
 
         const existing = siteMap.get(domain) || { seconds: 0, titles: new Set() }
         existing.seconds += activity.duration
-        if (activity.window_title) {
-            existing.titles.add(activity.window_title)
+        const cleanTitle = stripBrowserSuffix(title, activity.app_name)
+        if (cleanTitle && cleanTitle !== domain) {
+            existing.titles.add(cleanTitle)
         }
         siteMap.set(domain, existing)
     }
@@ -451,6 +466,70 @@ function extractBrowserSites(activities: TimelineActivity[]): BrowserSite[] {
             duration: formatDuration(data.seconds),
             titles: [...data.titles].slice(0, 3)
         }))
+}
+
+const BROWSER_NAMES = ['chrome', 'firefox', 'edge', 'centbrowser', 'cent browser', 'brave', 'opera', 'vivaldi', 'safari', 'arc']
+
+function isBrowserApp(appName: string): boolean {
+    const lower = appName.toLowerCase()
+    return BROWSER_NAMES.some(b => lower.includes(b))
+}
+
+function stripBrowserSuffix(title: string, appName: string): string {
+    const suffixes = [
+        ` - ${appName}`,
+        ` — ${appName}`,
+        ...BROWSER_NAMES.map(b => ` - ${b}`),
+        ...BROWSER_NAMES.map(b => ` — ${b}`)
+    ]
+    let result = title
+    for (const suffix of suffixes) {
+        const idx = result.toLowerCase().lastIndexOf(suffix.toLowerCase())
+        if (idx > 0) {
+            result = result.substring(0, idx)
+            break
+        }
+    }
+    return result.trim()
+}
+
+const TITLE_DOMAIN_MAP: Record<string, string> = {
+    '哔哩哔哩': 'bilibili.com',
+    'bilibili': 'bilibili.com',
+    'github': 'github.com',
+    'youtube': 'youtube.com',
+    'google': 'google.com',
+    'stackoverflow': 'stackoverflow.com',
+    'stack overflow': 'stackoverflow.com',
+    'reddit': 'reddit.com',
+    'twitter': 'twitter.com',
+    'outlook': 'outlook.com',
+    '腾讯文档': 'docs.qq.com',
+    '飞书': 'feishu.cn',
+    '知乎': 'zhihu.com',
+    '掘金': 'juejin.cn',
+    'csdn': 'csdn.net',
+    '百度': 'baidu.com',
+    'notion': 'notion.so',
+    'chatgpt': 'chatgpt.com',
+    'claude': 'claude.ai',
+    'npm': 'npmjs.com',
+    'docker': 'docker.com',
+}
+
+function extractDomainFromTitle(title: string, appName: string): string | null {
+    const cleanTitle = stripBrowserSuffix(title, appName).toLowerCase()
+    if (!cleanTitle || cleanTitle === '新标签页' || cleanTitle === '无标题' || cleanTitle === 'new tab') {
+        return null
+    }
+
+    for (const [keyword, domain] of Object.entries(TITLE_DOMAIN_MAP)) {
+        if (cleanTitle.includes(keyword.toLowerCase())) {
+            return domain
+        }
+    }
+
+    return cleanTitle.split(/\s*[-|–—]\s*/)[0].trim().substring(0, 30) || null
 }
 
 function extractDomain(url: string): string | null {
