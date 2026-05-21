@@ -14,6 +14,7 @@ import {
     aggregateReportMetrics,
     type TimelineActivity
 } from './workreview.js'
+import { registerCurrentScreenTool } from './current-screen-tool.js'
 import { isDateString, today, yesterday } from './utils.js'
 
 export const name = 'workreview'
@@ -42,6 +43,7 @@ export function apply(ctx: Context, config: Config) {
     const renderer = new ActivityRenderer(ctx, config)
 
     modelSchema(ctx)
+    registerCurrentScreenTool(ctx, config, client, llm)
 
     ctx.on('ready', async () => {
         await renderer.init().catch((error) =>

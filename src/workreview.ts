@@ -7,6 +7,7 @@ export interface TimelineActivity {
     app_name: string
     window_title: string
     screenshot_path: string
+    screenshot_url?: string
     ocr_text: string | null
     category: string
     duration: number
@@ -53,6 +54,14 @@ export interface BrowserSite {
     seconds: number
     duration: string
     titles: string[]
+}
+
+export interface ScreenSnapshot {
+    screenshotUrl: string
+    appName: string
+    windowTitle: string
+    category: string
+    timestamp: number
 }
 
 export class WorkReviewClient {
@@ -397,6 +406,7 @@ function aggregateBrowserSites(metrics: ReportMetrics[]): BrowserSite[] {
         }
     }
     return [...siteMap.entries()]
+        .filter(([, data]) => data.seconds >= 300)
         .sort((a, b) => b[1].seconds - a[1].seconds)
         .slice(0, 5)
         .map(([domain, data]) => ({
@@ -431,12 +441,14 @@ function extractBrowserSites(activities: TimelineActivity[]): BrowserSite[] {
 
     const browserApps = new Set<string>()
     for (const activity of activities) {
+        if (isRedactedActivity(activity)) continue
         if (activity.browser_url) {
             browserApps.add(activity.app_name)
         }
     }
 
     for (const activity of activities) {
+        if (isRedactedActivity(activity)) continue
         let domain: string | null = null
         let title = activity.window_title || ''
 
@@ -458,6 +470,7 @@ function extractBrowserSites(activities: TimelineActivity[]): BrowserSite[] {
     }
 
     return [...siteMap.entries()]
+        .filter(([, data]) => data.seconds >= 300)
         .sort((a, b) => b[1].seconds - a[1].seconds)
         .slice(0, 5)
         .map(([domain, data]) => ({
@@ -530,6 +543,28 @@ function extractDomainFromTitle(title: string, appName: string): string | null {
     }
 
     return cleanTitle.split(/\s*[-|–—]\s*/)[0].trim().substring(0, 30) || null
+}
+
+export function findLatestScreenSnapshot(activities: TimelineActivity[]): ScreenSnapshot | null {
+    const activity = activities
+        .slice()
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .find((item) => item.screenshot_url && !isRedactedActivity(item))
+
+    if (!activity?.screenshot_url) return null
+    return {
+        screenshotUrl: activity.screenshot_url,
+        appName: activity.app_name,
+        windowTitle: activity.window_title,
+        category: activity.semantic_category || activity.category,
+        timestamp: activity.timestamp
+    }
+}
+
+function isRedactedActivity(activity: TimelineActivity): boolean {
+    return [activity.window_title, activity.ocr_text, activity.browser_url].some(
+        value => typeof value === 'string' && value.includes('内容已脱敏')
+    )
 }
 
 function extractDomain(url: string): string | null {

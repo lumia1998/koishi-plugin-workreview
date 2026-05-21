@@ -26,9 +26,9 @@ export interface Config {
     outputMode: 'image' | 'text' | 'both'
     theme: 'light' | 'dark' | 'auto'
     timeout: number
-    autoGenerateMissingReport: boolean
     cacheReports: boolean
     cacheIntervalMinutes: number
+    enableCurrentScreenTool: boolean
 }
 
 const DeviceConfig: Schema<DeviceConfig> = Schema.object({
@@ -72,10 +72,7 @@ export const Config: Schema<Config> = Schema.intersect([
             .role('table')
             .default([])
             .description('定时推送规则'),
-        commandName: Schema.string().default('活动日报').description('根命令名称'),
-        autoGenerateMissingReport: Schema.boolean()
-            .default(true)
-            .description('日报不存在时是否自动调用生成接口')
+        commandName: Schema.string().default('活动日报').description('根命令名称')
     }).description('基础设置'),
     Schema.object({
         model: Schema.dynamic('model').description('用于分析日报的 ChatLuna 模型'),
@@ -114,6 +111,9 @@ export const Config: Schema<Config> = Schema.intersect([
         cacheIntervalMinutes: Schema.number()
             .min(1)
             .default(5)
-            .description('日报缓存刷新间隔（分钟）')
+            .description('日报缓存刷新间隔（分钟）'),
+        enableCurrentScreenTool: Schema.boolean()
+            .default(true)
+            .description('是否向 ChatLuna 注册“查看当前屏幕”工具')
     }).description('输出设置')
 ]) as unknown as Schema<Config>

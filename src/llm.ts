@@ -4,6 +4,7 @@ import { SystemMessage, HumanMessage } from '@langchain/core/messages'
 import { getMessageContent } from 'koishi-plugin-chatluna/utils/string'
 import type { ComputedRef } from 'koishi-plugin-chatluna'
 import type { Config } from './config.js'
+import type { ScreenSnapshot } from './workreview.js'
 
 export interface AppComment {
     name: string
@@ -100,6 +101,54 @@ export class ActivityLLM {
         const raw = getMessageContent(result.content).trim()
         return this.parseAnalysisResponse(raw, topApps || [], browserSites || [])
     }
+
+    async analyzeCurrentScreen(
+        deviceName: string,
+        snapshot: ScreenSnapshot
+    ): Promise<string> {
+        const modelRef = await this.loadModel()
+        const model = modelRef.value
+        if (!model) throw new Error('ChatLuna 模型未就绪，请检查模型配置。')
+
+        const systemPrompt = [
+            '你会根据一张当前屏幕截图判断用户正在做什么。',
+            '要求：',
+            '- 必须使用中文。',
+            '- 只描述截图中能直接看出的内容，不要臆测敏感信息。',
+            '- 如果截图内容不清晰或无法访问，就直接说明无法判断。',
+            '- 回复控制在 80 字以内，像在回答“我在干嘛？”一样自然。'
+        ].join('\n')
+
+        const text = [
+            `设备：${deviceName}`,
+            `应用：${snapshot.appName}`,
+            `窗口标题：${snapshot.windowTitle || '未知'}`,
+            `分类：${snapshot.category || '未知'}`,
+            '',
+            '请结合这张截图，简短说明用户当前可能正在做什么。'
+        ].join('\n')
+
+        const result = await Promise.race([
+            model.invoke(
+                [
+                    new SystemMessage(systemPrompt),
+                    new HumanMessage({
+                        content: [
+                            { type: 'text', text },
+                            { type: 'image_url', image_url: { url: snapshot.screenshotUrl } }
+                        ]
+                    })
+                ],
+                { temperature: Math.min(this.config.temperature, 0.8) }
+            ),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('当前屏幕分析超时')), 60000)
+            )
+        ])
+
+        return getMessageContent(result.content).trim()
+    }
+
 
     private parseAnalysisResponse(raw: string, topApps: string[], browserSites: string[]): ActivityAnalysis {
         const appMarker = '---APP_COMMENTS---'
