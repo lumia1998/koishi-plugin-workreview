@@ -264,6 +264,34 @@ body {
     white-space: nowrap;
 }
 
+.weekly-chart {
+    justify-content: center;
+    gap: 18px;
+}
+
+.weekly-column {
+    flex: 0 0 48px;
+}
+
+.weekly-bar {
+    width: 26px;
+    max-width: 26px;
+    background: rgba(66, 165, 245, 0.12);
+}
+
+.weekly-label {
+    transform: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.1;
+}
+
+.weekly-label small {
+    font-size: 0.5rem;
+    color: var(--ink-secondary);
+}
+
 /* ==================== 活动分类饼图 ==================== */
 .category-section {
     padding: 16px;

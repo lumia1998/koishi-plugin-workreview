@@ -37,6 +37,16 @@ export interface RenderData {
     metrics: ReportMetrics
     analysis: ActivityAnalysis
     summaryTitle: string
+    reportTitle?: string
+    chartTitle?: string
+    dailyActivity?: DailyActivityItem[]
+}
+
+export interface DailyActivityItem {
+    date: string
+    label: string
+    seconds: number
+    duration: string
 }
 
 export class ActivityRenderer {
@@ -56,14 +66,17 @@ export class ActivityRenderer {
         const [template, css] = await this.loadResources()
         const topApps = data.metrics.topApps.slice(0, 8)
         const colorMap = new Map(topApps.map((app, i) => [app.name, APP_COLORS[i % APP_COLORS.length]]))
+        const useDailyChart = !!data.dailyActivity?.length
 
         const html = renderTemplate(template, {
             inlineStyle: this.applyTheme(css),
             deviceName: escapeHtml(data.deviceName),
             date: escapeHtml(data.date),
+            reportTitle: escapeHtml(data.reportTitle || '活动日报'),
+            chartTitle: escapeHtml(data.chartTitle || '24H 活跃轨迹'),
             totalDuration: escapeHtml(data.metrics.totalDuration),
-            activityChart: this.generateCombinedChart(data.metrics, colorMap),
-            appLegend: this.generateLegend(topApps, colorMap),
+            activityChart: useDailyChart ? this.generateDailyChart(data.dailyActivity!) : this.generateCombinedChart(data.metrics, colorMap),
+            appLegend: useDailyChart ? '' : this.generateLegend(topApps, colorMap),
             categoryPieChart: this.generateCategoryPieChart(data.metrics.categoryBreakdown),
             topAppsWithComments: this.generateTopAppsComments(topApps, data.analysis.appComments),
             browserSites: this.generateBrowserSites(data.metrics.topBrowserSites, data.analysis.siteComments),
@@ -81,6 +94,40 @@ export class ActivityRenderer {
             const element = await page.$('.container')
             if (!element) throw new Error('无法找到图片模板容器 .container')
             return (await element.screenshot({})) as Buffer
+        } finally {
+            await page.close().catch(() => undefined)
+        }
+    }
+
+    async blurImageUrl(imageUrl: string, blurLevel: number): Promise<Buffer> {
+        const normalized = Math.max(0, Math.min(100, Math.round(blurLevel)))
+        if (normalized <= 0) throw new Error('模糊等级必须大于 0')
+
+        const blurPixels = Math.max(1, Math.round(normalized * 0.35))
+        const html = [
+            '<!DOCTYPE html><html><head><meta charset="UTF-8">',
+            '<style>',
+            'html,body{margin:0;padding:0;background:transparent;}',
+            '.wrap{display:inline-block;overflow:hidden;background:#111;}',
+            `img{display:block;filter:blur(${blurPixels}px);transform:scale(1.04);transform-origin:center;}`,
+            '</style></head><body>',
+            `<div class="wrap"><img src="${imageUrl}"></div>`,
+            '</body></html>'
+        ].join('')
+
+        const page = await this.ctx.puppeteer.page()
+        try {
+            await page.setContent(html, { waitUntil: 'load' })
+            await page.evaluate(() => new Promise<void>((resolve, reject) => {
+                const image = document.querySelector('img')
+                if (!image) return reject(new Error('无法找到截图图片元素'))
+                if (image.complete) return resolve()
+                image.addEventListener('load', () => resolve(), { once: true })
+                image.addEventListener('error', () => reject(new Error('截图图片加载失败')), { once: true })
+            }))
+            const element = await page.$('.wrap')
+            if (!element) throw new Error('无法找到截图渲染容器 .wrap')
+            return (await element.screenshot({ type: 'png' })) as Buffer
         } finally {
             await page.close().catch(() => undefined)
         }
@@ -153,6 +200,42 @@ export class ActivityRenderer {
         })
 
         return `<div class="chart-container-horizontal">${items.join('')}</div>`
+    }
+
+    private generateDailyChart(days: DailyActivityItem[]): string {
+        const maxSeconds = Math.max(...days.map((day) => day.seconds), 0)
+        if (maxSeconds === 0) {
+            return '<div class="empty">暂无活跃数据</div>'
+        }
+
+        const items = days.map((day) => {
+            const percentage = maxSeconds > 0 ? Math.min((day.seconds / maxSeconds) * 100, 100) : 0
+            const height = day.seconds > 0 ? `max(4px, ${percentage}%)` : '0px'
+            const value = day.seconds > 0 ? this.formatShortDuration(day.seconds) : ''
+            const dateLabel = day.date.slice(5)
+
+            return `
+                <div class="chart-column weekly-column ${day.seconds > 0 ? 'show-value' : ''}" title="${escapeHtml(day.date)} - ${escapeHtml(day.duration)}">
+                    <div class="bar-value-top">${escapeHtml(value)}</div>
+                    <div class="bar-stack weekly-bar" style="height: ${height};">
+                        <div class="bar-segment" style="flex: 1; background-color: #42a5f5;"></div>
+                    </div>
+                    <div class="bar-label-x weekly-label">
+                        <span>${escapeHtml(day.label)}</span>
+                        <small>${escapeHtml(dateLabel)}</small>
+                    </div>
+                </div>`
+        })
+
+        return `<div class="chart-container-horizontal weekly-chart">${items.join('')}</div>`
+    }
+
+    private formatShortDuration(seconds: number): string {
+        const hours = Math.floor(seconds / 3600)
+        const minutes = Math.round((seconds % 3600) / 60)
+        if (hours && minutes) return `${hours}h${minutes}m`
+        if (hours) return `${hours}h`
+        return `${minutes}m`
     }
 
     private generateLegend(

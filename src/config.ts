@@ -26,8 +26,8 @@ export interface Config {
     outputMode: 'image' | 'text' | 'both'
     theme: 'light' | 'dark' | 'auto'
     timeout: number
-    cacheReports: boolean
     cacheIntervalMinutes: number
+    currentScreenshotBlur: number
     enableCurrentScreenTool: boolean
 }
 
@@ -105,13 +105,16 @@ export const Config: Schema<Config> = Schema.intersect([
             .min(1000)
             .default(30000)
             .description('API 请求超时时间（毫秒）'),
-        cacheReports: Schema.boolean()
-            .default(true)
-            .description('是否定时缓存日报原文到本地'),
         cacheIntervalMinutes: Schema.number()
             .min(1)
             .default(5)
-            .description('日报缓存刷新间隔（分钟）'),
+            .description('日报缓存刷新间隔（分钟）。命令生成时优先调用 API，失败后回退到缓存。'),
+        currentScreenshotBlur: Schema.number()
+            .min(0)
+            .max(100)
+            .default(0)
+            .role('slider')
+            .description('当前截图发送前的模糊等级，0 为关闭，100 为最大模糊。敏感内容会强制模糊。'),
         enableCurrentScreenTool: Schema.boolean()
             .default(true)
             .description('是否向 ChatLuna 注册“查看当前屏幕”工具')

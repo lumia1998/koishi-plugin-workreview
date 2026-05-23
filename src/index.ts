@@ -12,6 +12,8 @@ import {
     WorkReviewClient,
     extractReportMetrics,
     aggregateReportMetrics,
+    findCurrentScreenshotSnapshot,
+    type ReportMetrics,
     type TimelineActivity
 } from './workreview.js'
 import { registerCurrentScreenTool } from './current-screen-tool.js'
@@ -55,14 +57,11 @@ export function apply(ctx: Context, config: Config) {
     const subcommands = new Set<string>()
     const cacheRoot = path.join(ctx.baseDir, 'data', 'workreview', 'cache')
 
-    // 5 分钟轮询缓存当天时间线
-    if (config.cacheReports) {
-        ctx.on('ready', async () => {
-            await ensureCacheDir()
-            await refreshTimelineCache()
-        })
-        ctx.setInterval(refreshTimelineCache, Math.max(config.cacheIntervalMinutes, 1) * 60 * 1000)
-    }
+    ctx.on('ready', async () => {
+        await ensureCacheDir()
+        await refreshTimelineCache()
+    })
+    ctx.setInterval(refreshTimelineCache, Math.max(config.cacheIntervalMinutes, 1) * 60 * 1000)
 
     ctx.command(`${commandName} [device] [date]`, '生成活动日报')
         .alias('日报')
@@ -100,6 +99,14 @@ export function apply(ctx: Context, config: Config) {
         formatDeviceList(config.devices)
     )
     subcommands.add('列表')
+
+    ctx.command('peek [device]', '发送当前屏幕截图')
+        .action(async ({ session }, deviceName) => {
+            if (!session) return
+            const resolvedDevice = deviceName || defaultDeviceName()
+            if (!resolvedDevice) return formatDeviceList(config.devices)
+            return sendCurrentScreenshot(session, resolvedDevice)
+        })
 
     // 定时推送
     if (config.pushes?.length && ctx.cron) {
@@ -146,6 +153,7 @@ export function apply(ctx: Context, config: Config) {
     }
 
     async function saveCachedTimeline(deviceName: string, date: string, activities: TimelineActivity[]) {
+        await ensureCacheDir()
         const cached: CachedTimeline = {
             device: deviceName,
             date,
@@ -198,21 +206,20 @@ export function apply(ctx: Context, config: Config) {
         const device = findDevice(deviceName)
         if (!device) throw new Error(`找不到设备：${deviceName}`)
 
-        // 优先从缓存读取
-        const cached = await loadCachedTimeline(deviceName, date)
-        if (cached) {
-            logger.debug(`使用缓存的时间线: ${deviceName} ${date} (${cached.length} 条)`)
-            return cached
+        try {
+            logger.debug(`从 API 获取时间线: ${deviceName} ${date}`)
+            const activities = await client.getTimeline(device, date)
+            await saveCachedTimeline(deviceName, date, activities)
+            return activities
+        } catch (error) {
+            logger.debug(`从 API 获取 ${deviceName} ${date} 时间线失败，尝试读取缓存`, error)
+            const cached = await loadCachedTimeline(deviceName, date)
+            if (cached) {
+                logger.debug(`使用缓存的时间线: ${deviceName} ${date} (${cached.length} 条)`)
+                return cached
+            }
+            throw error
         }
-
-        // 缓存未命中，从 API 获取
-        logger.debug(`从 API 获取时间线: ${deviceName} ${date}`)
-        const activities = await client.getTimeline(device, date)
-
-        // 保存到缓存
-        await saveCachedTimeline(deviceName, date, activities)
-
-        return activities
     }
 
     async function sendReport(
@@ -246,7 +253,9 @@ export function apply(ctx: Context, config: Config) {
                 date,
                 metrics,
                 analysis,
-                summaryTitle: '每日总结'
+                summaryTitle: '每日总结',
+                reportTitle: '活动日报',
+                chartTitle: '24H 活跃轨迹',
             })
 
             if (config.outputMode === 'both') {
@@ -265,20 +274,20 @@ export function apply(ctx: Context, config: Config) {
             const endDate = today()
             const dates = getWeekDates(endDate)
 
-            const allMetrics = []
+            const allMetrics: ReportMetrics[] = []
+            let hasActivity = false
             for (const date of dates) {
                 try {
                     const activities = await getTimeline(deviceName, date)
-                    if (activities.length > 0) {
-                        const metrics = extractReportMetrics(activities, date)
-                        allMetrics.push(metrics)
-                    }
+                    const metrics = extractReportMetrics(activities, date)
+                    allMetrics.push(metrics)
+                    if (activities.length > 0) hasActivity = true
                 } catch (error) {
                     logger.debug(`获取 ${date} 数据失败`, error)
                 }
             }
 
-            if (allMetrics.length === 0) {
+            if (!hasActivity) {
                 await session.send('本周暂无活动数据。')
                 return
             }
@@ -288,21 +297,67 @@ export function apply(ctx: Context, config: Config) {
             const browserSiteNames = weeklyMetrics.topBrowserSites.map((site) => site.domain)
 
             // 构建周报摘要
-            const weeklySummary = buildWeeklySummary(allMetrics)
-            const analysis = await llm.analyze(deviceName, weeklyMetrics.date, weeklySummary, topAppNames, browserSiteNames)
+            const weeklySummary = buildWeeklySummary(allMetrics, weeklyMetrics)
+            const analysis = await llm.analyze(deviceName, weeklyMetrics.date, weeklySummary, topAppNames, browserSiteNames, 'week')
 
             const imageBuffer = await renderer.render({
                 deviceName,
                 date: weeklyMetrics.date,
                 metrics: weeklyMetrics,
                 analysis,
-                summaryTitle: '每周总结'
+                summaryTitle: '每周总结',
+                reportTitle: '活动周报',
+                chartTitle: '本周活跃轨迹',
+                dailyActivity: buildDailyActivity(allMetrics),
             })
 
             await session.send(h.image(imageBuffer, 'image/png'))
         } catch (error) {
             await session.send(formatError('生成周报失败', error))
         }
+    }
+
+    async function sendCurrentScreenshot(session: Session, deviceName: string): Promise<void> {
+        try {
+            const device = findDevice(deviceName)
+            if (!device) throw new Error(`找不到设备：${deviceName}`)
+            const activities = await client.getTimeline(device, today())
+            const snapshot = findCurrentScreenshotSnapshot(activities)
+            if (!snapshot) {
+                await session.send('没有找到今天的屏幕活动记录。')
+                return
+            }
+            if (!snapshot.screenshotUrl) {
+                await session.send(formatSensitiveScreenshotNotice(snapshot))
+                return
+            }
+
+            const blurLevel = resolveScreenshotBlur(snapshot.sensitive)
+            if (blurLevel > 0) {
+                const imageBuffer = await renderer.blurImageUrl(snapshot.screenshotUrl, blurLevel)
+                await session.send(h.image(imageBuffer, 'image/png'))
+            } else {
+                await session.send(h.image(snapshot.screenshotUrl))
+            }
+
+            if (snapshot.sensitive) {
+                await session.send(`当前屏幕命中隐私规则，已强制模糊处理：${snapshot.sensitiveReason || '敏感内容'}`)
+            } else if (blurLevel > 0) {
+                await session.send(`当前截图已按配置应用 ${blurLevel}/100 模糊。`)
+            }
+        } catch (error) {
+            await session.send(formatError('发送当前截图失败', error))
+        }
+    }
+
+    function resolveScreenshotBlur(forceBlur: boolean): number {
+        const configured = Math.max(0, Math.min(100, Math.round(config.currentScreenshotBlur || 0)))
+        return forceBlur ? Math.max(configured, 70) : configured
+    }
+
+    function formatSensitiveScreenshotNotice(snapshot: { sensitiveReason: string | null }): string {
+        const reason = snapshot.sensitiveReason || '当前活动没有可发送截图'
+        return `当前屏幕可能包含敏感内容，Work_Review 未返回可发送截图：${reason}`
     }
 
     function buildActivitySummary(activities: TimelineActivity[], metrics: any): string {
@@ -354,7 +409,7 @@ export function apply(ctx: Context, config: Config) {
             })
     }
 
-    function buildWeeklySummary(allMetrics: any[]): string {
+    function buildWeeklySummary(allMetrics: ReportMetrics[], weeklyMetrics: ReportMetrics): string {
         const lines = [
             '本周活动汇总:',
             '',
@@ -362,9 +417,23 @@ export function apply(ctx: Context, config: Config) {
             ...allMetrics.map(m => `- ${m.date}: ${m.totalDuration}`),
             '',
             '整周应用使用排行:',
-            ...allMetrics[0].topApps.map((app: any, i: number) => `${i + 1}. ${app.name}: ${app.duration}`)
+            ...weeklyMetrics.topApps.map((app, i) => `${i + 1}. ${app.name}: ${app.duration}`)
         ]
         return lines.join('\n')
+    }
+
+    function buildDailyActivity(metrics: ReportMetrics[]) {
+        const labels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+        return metrics.map((metric) => {
+            const [year, month, day] = metric.date.split('-').map(Number)
+            const label = labels[new Date(year, month - 1, day).getDay()]
+            return {
+                date: metric.date,
+                label,
+                seconds: metric.totalSeconds,
+                duration: metric.totalDuration
+            }
+        })
     }
 
     function getWeekDates(endDate: string): string[] {

@@ -39,10 +39,12 @@ export interface HourlyAppBreakdown {
 
 export interface ReportMetrics {
     date: string
+    totalSeconds: number
     totalDuration: string
     screenshotCount: number
     appCount: number
     topApps: Array<{ name: string; duration: string }>
+    appBreakdown: Array<{ name: string; seconds: number; duration: string }>
     hourlyActivity: HourlyActivity
     hourlyAppBreakdown: HourlyAppBreakdown
     categoryBreakdown: Array<{ category: string; seconds: number }>
@@ -58,11 +60,19 @@ export interface BrowserSite {
 
 export interface ScreenSnapshot {
     screenshotUrl: string
+    ocrText: string | null
     appName: string
     windowTitle: string
     category: string
     timestamp: number
 }
+
+export interface CurrentScreenshotSnapshot extends ScreenSnapshot {
+    sensitive: boolean
+    sensitiveReason: string | null
+}
+
+const SENSITIVE_TEXT_MARKERS = ['内容已脱敏', '密码信息', '敏感词', '域名黑名单', '完全忽略', '内容过滤']
 
 export class WorkReviewClient {
     constructor(private timeout: number) {}
@@ -70,6 +80,17 @@ export class WorkReviewClient {
     async getTimeline(device: DeviceConfig, date: string): Promise<TimelineActivity[]> {
         const path = `/v1/timeline/${encodeURIComponent(date)}`
         return this.get(device, path) as Promise<TimelineActivity[]>
+    }
+
+    async downloadBinary(url: string): Promise<Buffer> {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), this.timeout)
+        try {
+            const data = await this.requestUrl(url, { method: 'GET' }, false, controller.signal)
+            return Buffer.from(data as ArrayBuffer)
+        } finally {
+            clearTimeout(timer)
+        }
     }
 
     private async get(device: DeviceConfig, path: string): Promise<unknown> {
@@ -86,25 +107,35 @@ export class WorkReviewClient {
 
         try {
             const url = this.buildUrl(device, path)
-            const response = await fetch(url, {
-                ...init,
-                signal: controller.signal,
-                headers: {
-                    Accept: 'application/json',
-                    ...(init.headers as Record<string, string> || {})
-                }
-            })
+            return this.requestUrl(url, init, true, controller.signal)
+        } finally {
+            clearTimeout(timer)
+        }
+    }
 
-            const text = await response.text()
+    private async requestUrl(
+        url: string,
+        init: RequestInit,
+        parseJson: boolean,
+        signal?: AbortSignal
+    ): Promise<unknown> {
+        const response = await fetch(url, {
+            ...init,
+            signal,
+            headers: {
+                Accept: parseJson ? 'application/json' : '*/*',
+                ...(init.headers as Record<string, string> || {})
+            }
+        })
+
+        const text = parseJson || !response.ok ? await response.text() : ''
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`)
             }
 
-            if (!text) throw new Error('服务器返回了空响应')
-            return JSON.parse(text)
-        } finally {
-            clearTimeout(timer)
-        }
+        if (!parseJson) return response.arrayBuffer()
+        if (!text) throw new Error('服务器返回了空响应')
+        return JSON.parse(text)
     }
 
     private buildUrl(device: DeviceConfig, path: string): string {
@@ -232,10 +263,12 @@ export function extractReportMetrics(
     if (activities.length === 0) {
         return {
             date,
+            totalSeconds: 0,
             totalDuration: '0秒',
             screenshotCount: 0,
             appCount: 0,
             topApps: [],
+            appBreakdown: [],
             hourlyActivity: { hours: Array(24).fill(0), maxSeconds: 0 },
             hourlyAppBreakdown: { hours: Array(24).fill(0).map(() => []), maxSeconds: 0 },
             categoryBreakdown: [],
@@ -257,14 +290,14 @@ export function extractReportMetrics(
         appDurations.set(activity.app_name, existing + activity.duration)
     }
 
-    // Top 应用排行
-    const topApps = [...appDurations.entries()]
+    const appBreakdown = [...appDurations.entries()]
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 8)
         .map(([name, seconds]) => ({
             name,
+            seconds,
             duration: formatDuration(seconds)
         }))
+    const topApps = appBreakdown.slice(0, 8).map(({ name, duration }) => ({ name, duration }))
 
     // 分类时长统计（使用 category 字段，映射为中文）
     const categoryDurations = new Map<string, number>()
@@ -282,10 +315,12 @@ export function extractReportMetrics(
 
     return {
         date,
+        totalSeconds,
         totalDuration,
         screenshotCount: activities.length,
         appCount: appDurations.size,
         topApps,
+        appBreakdown,
         hourlyActivity: hourlyData.hourlyActivity,
         hourlyAppBreakdown: hourlyData.hourlyAppBreakdown,
         categoryBreakdown,
@@ -306,33 +341,14 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
     const allAppNames = new Set<string>()
 
     for (const metric of metrics) {
-        // 解析总时长
-        const durationMatch = metric.totalDuration.match(/(\d+)小时|(\d+)分|(\d+)秒/g)
-        if (durationMatch) {
-            let seconds = 0
-            for (const part of durationMatch) {
-                if (part.includes('小时')) seconds += parseInt(part) * 3600
-                else if (part.includes('分')) seconds += parseInt(part) * 60
-                else if (part.includes('秒')) seconds += parseInt(part)
-            }
-            totalSeconds += seconds
-        }
+        totalSeconds += metric.totalSeconds
 
         totalScreenshots += metric.screenshotCount
 
         // 聚合应用时长
-        for (const app of metric.topApps) {
-            const durationMatch = app.duration.match(/(\d+)小时|(\d+)分|(\d+)秒/g)
-            if (durationMatch) {
-                let seconds = 0
-                for (const part of durationMatch) {
-                    if (part.includes('小时')) seconds += parseInt(part) * 3600
-                    else if (part.includes('分')) seconds += parseInt(part) * 60
-                    else if (part.includes('秒')) seconds += parseInt(part)
-                }
-                const existing = allApps.get(app.name) || 0
-                allApps.set(app.name, existing + seconds)
-            }
+        for (const app of metric.appBreakdown) {
+            const existing = allApps.get(app.name) || 0
+            allApps.set(app.name, existing + app.seconds)
             allAppNames.add(app.name)
         }
 
@@ -359,22 +375,25 @@ export function aggregateReportMetrics(metrics: ReportMetrics[]): ReportMetrics 
 
     const maxSeconds = Math.max(...hourlySeconds, 0)
 
-    const topApps = [...allApps.entries()]
+    const appBreakdown = [...allApps.entries()]
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 8)
         .map(([name, seconds]) => ({
             name,
+            seconds,
             duration: formatDuration(seconds)
         }))
+    const topApps = appBreakdown.slice(0, 8).map(({ name, duration }) => ({ name, duration }))
 
     const startDate = metrics[0].date
     const endDate = metrics[metrics.length - 1].date
 
     return {
+        totalSeconds,
         date: `${startDate} ~ ${endDate}`,
         totalDuration: formatDuration(totalSeconds),
         screenshotCount: totalScreenshots,
         appCount: allAppNames.size,
+        appBreakdown,
         topApps,
         hourlyActivity: {
             hours: hourlySeconds,
@@ -554,11 +573,51 @@ export function findLatestScreenSnapshot(activities: TimelineActivity[]): Screen
     if (!activity?.screenshot_url) return null
     return {
         screenshotUrl: activity.screenshot_url,
+        ocrText: activity.ocr_text,
         appName: activity.app_name,
         windowTitle: activity.window_title,
         category: activity.semantic_category || activity.category,
         timestamp: activity.timestamp
     }
+}
+
+export function findCurrentScreenshotSnapshot(activities: TimelineActivity[]): CurrentScreenshotSnapshot | null {
+    const activity = activities
+        .slice()
+        .sort((a, b) => b.timestamp - a.timestamp)[0]
+
+    if (!activity) return null
+    const sensitiveReason = getSensitiveReason(activity)
+    if (!activity.screenshot_url) {
+        return {
+            screenshotUrl: '',
+            ocrText: activity.ocr_text,
+            appName: activity.app_name,
+            windowTitle: activity.window_title,
+            category: activity.semantic_category || activity.category,
+            timestamp: activity.timestamp,
+            sensitive: true,
+            sensitiveReason: sensitiveReason || '当前活动没有可发送截图'
+        }
+    }
+
+    return {
+        screenshotUrl: activity.screenshot_url,
+        ocrText: activity.ocr_text,
+        appName: activity.app_name,
+        windowTitle: activity.window_title,
+        category: activity.semantic_category || activity.category,
+        timestamp: activity.timestamp,
+        sensitive: !!sensitiveReason,
+        sensitiveReason
+    }
+}
+
+function getSensitiveReason(activity: TimelineActivity): string | null {
+    if ((activity.category || '').toLowerCase().startsWith('cat-')) return '命中 Work_Review 隐私分类'
+    if (isRedactedActivity(activity)) return '内容已脱敏'
+    if (SENSITIVE_TEXT_MARKERS.some((marker) => activity.ocr_text?.includes(marker))) return '命中隐私过滤关键词'
+    return null
 }
 
 function isRedactedActivity(activity: TimelineActivity): boolean {

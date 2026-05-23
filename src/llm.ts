@@ -38,7 +38,8 @@ export class ActivityLLM {
         date: string,
         activitySummary: string,
         topApps?: string[],
-        browserSites?: string[]
+        browserSites?: string[],
+        reportType: 'day' | 'week' = 'day'
     ): Promise<ActivityAnalysis> {
         const modelRef = await this.loadModel()
         const model = modelRef.value
@@ -71,7 +72,8 @@ export class ActivityLLM {
         const systemPrompt = [
             this.config.stylePrompt,
             '',
-            '请根据用户提供的活动数据摘要，用你的风格总结用户这一天都做了什么。',
+            reportType === 'week' ? '请根据用户提供的活动数据摘要，用你的风格总结用户这一周都做了什么。'
+                : '请根据用户提供的活动数据摘要，用你的风格总结用户这一天都做了什么。',
             '要求：',
             '- 必须使用中文。',
             '- 不要重复原始数据，用自己的话概括。',
