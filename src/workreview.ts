@@ -77,6 +77,11 @@ const SENSITIVE_TEXT_MARKERS = ['内容已脱敏', '密码信息', '敏感词', 
 export class WorkReviewClient {
     constructor(private timeout: number) {}
 
+    async captureScreenshot(device: DeviceConfig): Promise<{ url: string }> {
+        const path = '/v1/screenshots/capture'
+        return this.request(device, path, { method: 'POST' }) as Promise<{ url: string }>
+    }
+
     async getTimeline(device: DeviceConfig, date: string): Promise<TimelineActivity[]> {
         const path = `/v1/timeline/${encodeURIComponent(date)}`
         return this.get(device, path) as Promise<TimelineActivity[]>
@@ -107,7 +112,16 @@ export class WorkReviewClient {
 
         try {
             const url = this.buildUrl(device, path)
-            return this.requestUrl(url, init, true, controller.signal)
+            const headers: Record<string, string> = {
+                ...(init.headers as Record<string, string> || {}),
+            }
+            if (device.token) {
+                headers['Authorization'] = `Bearer ${device.token}`
+            }
+            if (init.method === 'POST' && !headers['Content-Type']) {
+                headers['Content-Type'] = 'application/json'
+            }
+            return this.requestUrl(url, { ...init, headers }, true, controller.signal)
         } finally {
             clearTimeout(timer)
         }
@@ -144,12 +158,6 @@ export class WorkReviewClient {
         const hasPort = /:\d+$/.test(host)
         const base = `${protocol}://${host}${hasPort ? '' : `:${device.port || 47831}`}`
         const url = new URL(path, base)
-
-        // 使用 query param 方式传递 token
-        if (device.token) {
-            url.searchParams.set('token', device.token)
-        }
-
         return url.toString()
     }
 }

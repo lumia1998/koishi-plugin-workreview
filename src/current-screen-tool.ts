@@ -5,8 +5,7 @@ import type { Context } from 'koishi'
 import type { ChatLunaToolRunnable } from 'koishi-plugin-chatluna/llm-core/platform/types'
 import type { Config } from './config.js'
 import { ActivityLLM } from './llm.js'
-import { WorkReviewClient, findLatestScreenSnapshot, type ScreenSnapshot } from './workreview.js'
-import { today } from './utils.js'
+import { WorkReviewClient, type ScreenSnapshot } from './workreview.js'
 
 const CurrentScreenInputSchema = z.object({
     device: z.string().optional().describe('Work_Review 设备备注名。未提供时使用插件配置中的第一个设备。')
@@ -36,15 +35,21 @@ class CurrentScreenTool extends StructuredTool<typeof CurrentScreenInputSchema> 
         const device = this.resolveDevice(input.device)
         if (!device) return '还没有配置 Work_Review 设备，无法查看当前屏幕。'
 
-        let activities
+        let snapshot: ScreenSnapshot
         try {
-            activities = await this.client.getTimeline(device, today())
+            const result = await this.client.captureScreenshot(device)
+            if (!result.url) return `截图接口未返回图片地址（${device.name}）。`
+            snapshot = {
+                screenshotUrl: result.url,
+                ocrText: null,
+                appName: '',
+                windowTitle: '',
+                category: '',
+                timestamp: Math.floor(Date.now() / 1000)
+            }
         } catch (error) {
             return this.formatTimelineError(device.name, error)
         }
-
-        const snapshot = findLatestScreenSnapshot(activities)
-        if (!snapshot) return `没有找到 ${device.name} 今天可分析的屏幕截图。`
 
         try {
             return await this.llm.analyzeCurrentScreen(device.name, snapshot)

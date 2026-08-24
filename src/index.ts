@@ -12,7 +12,6 @@ import {
     WorkReviewClient,
     extractReportMetrics,
     aggregateReportMetrics,
-    findCurrentScreenshotSnapshot,
     type ReportMetrics,
     type TimelineActivity
 } from './workreview.js'
@@ -321,28 +320,22 @@ export function apply(ctx: Context, config: Config) {
         try {
             const device = findDevice(deviceName)
             if (!device) throw new Error(`找不到设备：${deviceName}`)
-            const activities = await client.getTimeline(device, today())
-            const snapshot = findCurrentScreenshotSnapshot(activities)
-            if (!snapshot) {
-                await session.send('没有找到今天的屏幕活动记录。')
-                return
-            }
-            if (!snapshot.screenshotUrl) {
-                await session.send(formatSensitiveScreenshotNotice(snapshot))
+            const result = await client.captureScreenshot(device)
+            const screenshotUrl = result.url
+            if (!screenshotUrl) {
+                await session.send('截图接口返回了空地址。')
                 return
             }
 
-            const blurLevel = resolveScreenshotBlur(snapshot.sensitive)
+            const blurLevel = resolveScreenshotBlur(false)
             if (blurLevel > 0) {
-                const imageBuffer = await renderer.blurImageUrl(snapshot.screenshotUrl, blurLevel)
+                const imageBuffer = await renderer.blurImageUrl(screenshotUrl, blurLevel)
                 await session.send(h.image(imageBuffer, 'image/png'))
             } else {
-                await session.send(h.image(snapshot.screenshotUrl))
+                await session.send(h.image(screenshotUrl))
             }
 
-            if (snapshot.sensitive) {
-                await session.send(`当前屏幕命中隐私规则，已强制模糊处理：${snapshot.sensitiveReason || '敏感内容'}`)
-            } else if (blurLevel > 0) {
+            if (blurLevel > 0) {
                 await session.send(`当前截图已按配置应用 ${blurLevel}/100 模糊。`)
             }
         } catch (error) {
@@ -353,11 +346,6 @@ export function apply(ctx: Context, config: Config) {
     function resolveScreenshotBlur(forceBlur: boolean): number {
         const configured = Math.max(0, Math.min(100, Math.round(config.currentScreenshotBlur || 0)))
         return forceBlur ? Math.max(configured, 70) : configured
-    }
-
-    function formatSensitiveScreenshotNotice(snapshot: { sensitiveReason: string | null }): string {
-        const reason = snapshot.sensitiveReason || '当前活动没有可发送截图'
-        return `当前屏幕可能包含敏感内容，Work_Review 未返回可发送截图：${reason}`
     }
 
     function buildActivitySummary(activities: TimelineActivity[], metrics: any): string {
