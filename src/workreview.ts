@@ -74,12 +74,29 @@ export interface CurrentScreenshotSnapshot extends ScreenSnapshot {
 
 const SENSITIVE_TEXT_MARKERS = ['内容已脱敏', '密码信息', '敏感词', '域名黑名单', '完全忽略', '内容过滤']
 
+export interface CaptureScreenshotResult {
+    capturedAt: number
+    width: number
+    height: number
+    mimeType: string
+    imageBase64: string
+}
+
+export function screenshotToDataUrl(result: CaptureScreenshotResult): string {
+    const mime = result.mimeType || 'image/jpeg'
+    return `data:${mime};base64,${result.imageBase64}`
+}
+
+export function screenshotToBuffer(result: CaptureScreenshotResult): Buffer {
+    return Buffer.from(result.imageBase64, 'base64')
+}
+
 export class WorkReviewClient {
     constructor(private timeout: number) {}
 
-    async captureScreenshot(device: DeviceConfig): Promise<{ url: string }> {
+    async captureScreenshot(device: DeviceConfig): Promise<CaptureScreenshotResult> {
         const path = '/v1/screenshots/capture'
-        return this.request(device, path, { method: 'POST' }) as Promise<{ url: string }>
+        return this.request(device, path, { method: 'POST' }) as Promise<CaptureScreenshotResult>
     }
 
     async getTimeline(device: DeviceConfig, date: string): Promise<TimelineActivity[]> {

@@ -5,7 +5,7 @@ import type { Context } from 'koishi'
 import type { ChatLunaToolRunnable } from 'koishi-plugin-chatluna/llm-core/platform/types'
 import type { Config } from './config.js'
 import { ActivityLLM } from './llm.js'
-import { WorkReviewClient, type ScreenSnapshot } from './workreview.js'
+import { WorkReviewClient, screenshotToDataUrl, type ScreenSnapshot } from './workreview.js'
 
 const CurrentScreenInputSchema = z.object({
     device: z.string().optional().describe('Work_Review 设备备注名。未提供时使用插件配置中的第一个设备。')
@@ -38,9 +38,9 @@ class CurrentScreenTool extends StructuredTool<typeof CurrentScreenInputSchema> 
         let snapshot: ScreenSnapshot
         try {
             const result = await this.client.captureScreenshot(device)
-            if (!result.url) return `截图接口未返回图片地址（${device.name}）。`
+            if (!result.imageBase64) return `截图接口未返回图片数据（${device.name}）。`
             snapshot = {
-                screenshotUrl: result.url,
+                screenshotUrl: screenshotToDataUrl(result),
                 ocrText: null,
                 appName: '',
                 windowTitle: '',

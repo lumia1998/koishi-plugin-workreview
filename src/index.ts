@@ -12,6 +12,8 @@ import {
     WorkReviewClient,
     extractReportMetrics,
     aggregateReportMetrics,
+    screenshotToBuffer,
+    screenshotToDataUrl,
     type ReportMetrics,
     type TimelineActivity
 } from './workreview.js'
@@ -321,18 +323,17 @@ export function apply(ctx: Context, config: Config) {
             const device = findDevice(deviceName)
             if (!device) throw new Error(`找不到设备：${deviceName}`)
             const result = await client.captureScreenshot(device)
-            const screenshotUrl = result.url
-            if (!screenshotUrl) {
-                await session.send('截图接口返回了空地址。')
+            if (!result.imageBase64) {
+                await session.send('截图接口返回了空数据。')
                 return
             }
 
             const blurLevel = resolveScreenshotBlur(false)
             if (blurLevel > 0) {
-                const imageBuffer = await renderer.blurImageUrl(screenshotUrl, blurLevel)
+                const imageBuffer = await renderer.blurImageUrl(screenshotToDataUrl(result), blurLevel)
                 await session.send(h.image(imageBuffer, 'image/png'))
             } else {
-                await session.send(h.image(screenshotUrl))
+                await session.send(h.image(screenshotToBuffer(result), result.mimeType || 'image/jpeg'))
             }
 
             if (blurLevel > 0) {
